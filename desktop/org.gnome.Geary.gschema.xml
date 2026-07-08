@@ -59,6 +59,45 @@
         Gmail.</description>
     </key>
 
+    <key name="keyboard-shortcut-scheme" type="s">
+        <choices>
+            <choice value="classic-geary"/>
+            <choice value="gmail"/>
+            <choice value="vim"/>
+            <choice value="custom"/>
+        </choices>
+        <default>"classic-geary"</default>
+        <summary>Keyboard shortcut scheme</summary>
+        <description>The active keyboard shortcut scheme. Valid values are
+        “classic-geary”, “gmail”, “vim”, and “custom”.</description>
+    </key>
+
+    <key name="keyboard-shortcut-scheme-migrated" type="b">
+        <default>false</default>
+        <summary>Whether the shortcut scheme setting has been migrated</summary>
+        <description>False to derive the shortcut scheme from the old
+        “single-key-shortcuts” setting.</description>
+    </key>
+
+    <key name="keyboard-shortcut-custom-profile" type="a{sv}">
+        <default>@a{sv} {}</default>
+        <summary>Custom keyboard shortcut profile</summary>
+        <description>User-defined keyboard shortcut bindings, keyed by
+        shortcut id. Each value is a string array of shortcut bindings.</description>
+    </key>
+
+    <key name="keyboard-shortcut-custom-profile-base" type="s">
+        <choices>
+            <choice value="classic-geary"/>
+            <choice value="gmail"/>
+            <choice value="vim"/>
+        </choices>
+        <default>"classic-geary"</default>
+        <summary>Base scheme for the custom keyboard shortcut profile</summary>
+        <description>The shortcut scheme used to create the current custom
+        shortcut profile.</description>
+    </key>
+
     <key name="spell-check-languages" type="mas">
         <default>nothing</default>
         <summary>Languages that shall be used in the spell checker</summary>

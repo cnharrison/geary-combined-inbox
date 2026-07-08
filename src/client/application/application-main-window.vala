@@ -25,12 +25,16 @@ public class Application.MainWindow :
     public const string ACTION_REPLY_ALL_CONVERSATION = "reply-all-conversation";
     public const string ACTION_REPLY_CONVERSATION = "reply-conversation";
     public const string ACTION_SEARCH = "search";
+    public const string ACTION_SELECT_FIRST_INBOX = "select-first-inbox";
     public const string ACTION_SELECT_INBOX = "select-inbox";
     public const string ACTION_SHOW_COPY_MENU = "show-copy-menu";
     public const string ACTION_TOGGLE_JUNK = "toggle-conversation-junk";
     public const string ACTION_TRASH_CONVERSATION = "trash-conversation";
     public const string ACTION_ZOOM = "zoom";
     public const string ACTION_NAVIGATION_BACK = "navigation-back";
+    public const string ACTION_NAVIGATION_FORWARD = "navigation-forward";
+    public const string ACTION_VIM_GO_TO_START = "vim-go-to-start";
+    public const string ACTION_VIM_GO_TO_END = "vim-go-to-end";
 
     private const ActionEntry[] EDIT_ACTIONS = {
         { Action.Edit.UNDO, on_undo },
@@ -44,8 +48,12 @@ public class Application.MainWindow :
 
         { ACTION_FIND_IN_CONVERSATION, on_find_in_conversation_action },
         { ACTION_SEARCH, on_search_activated },
+        { ACTION_SELECT_FIRST_INBOX, on_select_first_inbox },
         { ACTION_SELECT_INBOX, on_select_inbox, "i" },
-        { ACTION_NAVIGATION_BACK, go_to_previous_pane},
+        { ACTION_NAVIGATION_BACK, go_to_previous_pane },
+        { ACTION_NAVIGATION_FORWARD, on_navigation_forward },
+        { ACTION_VIM_GO_TO_START, on_vim_go_to_start },
+        { ACTION_VIM_GO_TO_END, on_vim_go_to_end },
 
         // Message actions
         { ACTION_REPLY_CONVERSATION, on_reply_conversation },
@@ -76,6 +84,8 @@ public class Application.MainWindow :
     private const int UPDATE_UI_INTERVAL = 60;
 
     private const int MIN_CONVERSATION_COUNT = 50;
+
+    private const uint SHORTCUT_SEQUENCE_TIMEOUT_MSEC = 800;
 
     static construct {
         // Set up default keybindings
@@ -399,6 +409,10 @@ public class Application.MainWindow :
 
     private Geary.TimeoutManager update_ui_timeout;
     private int64 update_ui_last = 0;
+    private bool vim_g_sequence_pending = false;
+    private uint vim_sequence_timeout_id = 0;
+    private Gee.List<string> shortcut_sequence = new Gee.ArrayList<string>();
+    private uint shortcut_sequence_timeout_id = 0;
 
     [GtkChild] private unowned Components.ApplicationHeaderBar application_headerbar;
     [GtkChild] private unowned Components.ConversationListHeaderBar conversation_list_headerbar;
@@ -721,6 +735,7 @@ public class Application.MainWindow :
         string? account_name = null;
         string? folder_name = null;
         if (this.selected_location.is_virtual) {
+            account_name = _("All Accounts");
             folder_name = get_unified_special_folder_title(
                 this.selected_location.special_use
             );
@@ -1766,6 +1781,9 @@ public class Application.MainWindow :
     /** {@inheritDoc} */
     public override bool key_press_event(Gdk.EventKey event) {
         check_shift_event(event);
+        if (dispatch_shortcut(event)) {
+            return Gdk.EVENT_STOP;
+        }
         return base.key_press_event(event);
     }
 
@@ -2420,6 +2438,344 @@ public class Application.MainWindow :
         }
     }
 
+    private void on_navigation_forward() {
+        go_to_next_pane();
+    }
+
+    private void on_vim_go_to_start() {
+        activate_vim_go_motion(false);
+    }
+
+    private void on_vim_go_to_end() {
+        activate_vim_go_motion(true);
+    }
+
+    private void activate_vim_go_motion(bool last) {
+        Gtk.Widget? focus = get_focus();
+        bool handled = false;
+        if (focus != null) {
+            if (last) {
+                handled = dispatch_vim_go_to_end(focus);
+            } else {
+                handled = dispatch_vim_go_to_start(focus);
+            }
+        }
+        if (!handled) {
+            error_bell();
+        }
+    }
+
+    private bool dispatch_shortcut(Gdk.EventKey event) {
+        ShortcutManager? manager = this.application.shortcut_manager;
+        if (manager == null) {
+            return false;
+        }
+
+        ShortcutScheme scheme = this.application.config.keyboard_shortcut_scheme;
+        Gtk.Widget? focus = get_focus();
+        if (manager.is_classic_mail_action_fallback(
+            scheme,
+            event.keyval,
+            event.state,
+            focus
+        )) {
+            reset_shortcut_sequence();
+            return true;
+        }
+
+        bool can_dispatch_from_focus = manager.can_dispatch_from_focus(focus);
+        bool uses_vim_context = uses_vim_context_shortcuts(scheme);
+        if (!can_dispatch_from_focus || !uses_vim_context) {
+            reset_vim_sequence();
+        }
+        if (!can_dispatch_from_focus) {
+            reset_shortcut_sequence();
+        }
+        if (can_dispatch_from_focus && uses_vim_context &&
+            dispatch_vim_context_shortcut(event, focus)) {
+            reset_shortcut_sequence();
+            return true;
+        }
+        if (dispatch_sequence_shortcut(manager, scheme, event, focus)) {
+            return true;
+        }
+
+        ShortcutEntry? entry = manager.get_dispatch_entry(
+            scheme,
+            event.keyval,
+            event.state,
+            focus
+        );
+        return entry != null && activate_shortcut_entry(entry);
+    }
+
+    private bool uses_vim_context_shortcuts(ShortcutScheme scheme) {
+        return scheme == ShortcutScheme.VIM ||
+            (scheme == ShortcutScheme.CUSTOM &&
+             this.application.config.custom_shortcut_profile_base ==
+             ShortcutScheme.VIM);
+    }
+
+    private bool dispatch_sequence_shortcut(ShortcutManager manager,
+                                            ShortcutScheme scheme,
+                                            Gdk.EventKey event,
+                                            Gtk.Widget? focus) {
+        string[] strokes = get_pending_shortcut_sequence(
+            manager.get_event_stroke(event.keyval, event.state)
+        );
+        ShortcutEntry? entry = manager.get_dispatch_entry_for_sequence(
+            scheme,
+            strokes,
+            focus
+        );
+        if (entry != null) {
+            reset_shortcut_sequence();
+            return activate_shortcut_entry(entry);
+        }
+
+        if (manager.has_dispatch_sequence_prefix(scheme, strokes, focus)) {
+            start_shortcut_sequence(strokes);
+            return true;
+        }
+
+        reset_shortcut_sequence();
+        return false;
+    }
+
+    private string[] get_pending_shortcut_sequence(string next_stroke) {
+        string[] strokes = {};
+        foreach (string stroke in this.shortcut_sequence) {
+            strokes += stroke;
+        }
+        strokes += next_stroke;
+        return strokes;
+    }
+
+    private void start_shortcut_sequence(string[] strokes) {
+        reset_shortcut_sequence();
+        foreach (string stroke in strokes) {
+            this.shortcut_sequence.add(stroke);
+        }
+        this.shortcut_sequence_timeout_id = GLib.Timeout.add(
+            SHORTCUT_SEQUENCE_TIMEOUT_MSEC,
+            () => {
+                this.shortcut_sequence.clear();
+                this.shortcut_sequence_timeout_id = 0;
+                return Source.REMOVE;
+            }
+        );
+    }
+
+    private void reset_shortcut_sequence() {
+        if (this.shortcut_sequence_timeout_id != 0) {
+            Source.remove(this.shortcut_sequence_timeout_id);
+            this.shortcut_sequence_timeout_id = 0;
+        }
+        this.shortcut_sequence.clear();
+    }
+
+    private bool dispatch_vim_context_shortcut(Gdk.EventKey event,
+                                               Gtk.Widget? focus) {
+        if (focus == null) {
+            return false;
+        }
+
+        if (dispatch_vim_sequence_shortcut(event, focus)) {
+            return true;
+        }
+
+        if (focus_is_in(focus, this.conversation_list_view)) {
+            return dispatch_vim_conversation_list_shortcut(event);
+        }
+        if (focus_is_in(focus, this.folder_list)) {
+            return dispatch_vim_folder_shortcut(event);
+        }
+        if (focus_is_in(focus, this.conversation_viewer)) {
+            return dispatch_vim_viewer_shortcut(event);
+        }
+        return false;
+    }
+
+    private bool dispatch_vim_sequence_shortcut(Gdk.EventKey event,
+                                                Gtk.Widget focus) {
+        if (this.vim_g_sequence_pending) {
+            reset_vim_sequence();
+            if (is_bare_key(event, Gdk.Key.g)) {
+                return dispatch_vim_go_to_start(focus);
+            }
+            return false;
+        }
+
+        if (is_bare_key(event, Gdk.Key.g) &&
+            focus_supports_vim_go_motion(focus)) {
+            start_vim_g_sequence();
+            return true;
+        }
+        return false;
+    }
+
+    private bool dispatch_vim_go_to_start(Gtk.Widget focus) {
+        if (focus_is_in(focus, this.conversation_list_view)) {
+            return consume_vim_navigation(
+                this.conversation_list_view.select_first_conversation()
+            );
+        }
+        if (focus_is_in(focus, this.conversation_viewer)) {
+            return focus_vim_viewer_edge(
+                this.conversation_viewer.current_list,
+                false
+            );
+        }
+        return false;
+    }
+
+    private bool dispatch_vim_go_to_end(Gtk.Widget focus) {
+        if (focus_is_in(focus, this.conversation_list_view)) {
+            return consume_vim_navigation(
+                this.conversation_list_view.select_last_conversation()
+            );
+        }
+        if (focus_is_in(focus, this.conversation_viewer)) {
+            return focus_vim_viewer_edge(
+                this.conversation_viewer.current_list,
+                true
+            );
+        }
+        return false;
+    }
+
+    private bool focus_supports_vim_go_motion(Gtk.Widget focus) {
+        return focus_is_in(focus, this.conversation_list_view) ||
+            focus_is_in(focus, this.conversation_viewer);
+    }
+
+    private void start_vim_g_sequence() {
+        reset_vim_sequence();
+        this.vim_g_sequence_pending = true;
+        this.vim_sequence_timeout_id = GLib.Timeout.add(
+            SHORTCUT_SEQUENCE_TIMEOUT_MSEC,
+            () => {
+                this.vim_g_sequence_pending = false;
+                this.vim_sequence_timeout_id = 0;
+                return Source.REMOVE;
+            }
+        );
+    }
+
+    private void reset_vim_sequence() {
+        if (this.vim_sequence_timeout_id != 0) {
+            Source.remove(this.vim_sequence_timeout_id);
+            this.vim_sequence_timeout_id = 0;
+        }
+        this.vim_g_sequence_pending = false;
+    }
+
+    private bool dispatch_vim_conversation_list_shortcut(Gdk.EventKey event) {
+        if (is_shift_key(event, Gdk.Key.G)) {
+            return dispatch_vim_go_to_end(this.conversation_list_view);
+        }
+        return false;
+    }
+
+    private bool dispatch_vim_folder_shortcut(Gdk.EventKey event) {
+        if (is_bare_key(event, Gdk.Key.j)) {
+            return consume_vim_navigation(
+                this.folder_list.select_next_visible_entry()
+            );
+        }
+        if (is_bare_key(event, Gdk.Key.k)) {
+            return consume_vim_navigation(
+                this.folder_list.select_previous_visible_entry()
+            );
+        }
+        if (is_bare_key(event, Gdk.Key.h)) {
+            return this.folder_list.collapse_selected_branch();
+        }
+        if (is_bare_key(event, Gdk.Key.l)) {
+            return this.folder_list.expand_selected_branch();
+        }
+        return false;
+    }
+
+    private bool dispatch_vim_viewer_shortcut(Gdk.EventKey event) {
+        ConversationListBox? list = this.conversation_viewer.current_list;
+        if (is_bare_key(event, Gdk.Key.j)) {
+            return focus_vim_viewer_message(list, true);
+        }
+        if (is_bare_key(event, Gdk.Key.k)) {
+            return focus_vim_viewer_message(list, false);
+        }
+        if (is_shift_key(event, Gdk.Key.G)) {
+            return dispatch_vim_go_to_end(this.conversation_viewer);
+        }
+        return false;
+    }
+
+    private bool focus_vim_viewer_message(ConversationListBox? list,
+                                          bool next) {
+        if (list == null) {
+            return consume_vim_navigation(false);
+        }
+        if (next) {
+            list.focus_next_message();
+        } else {
+            list.focus_previous_message();
+        }
+        return true;
+    }
+
+    private bool focus_vim_viewer_edge(ConversationListBox? list,
+                                       bool last) {
+        if (list == null) {
+            return consume_vim_navigation(false);
+        }
+        return consume_vim_navigation(
+            last ? list.focus_last_message() : list.focus_first_message()
+        );
+    }
+
+    private bool consume_vim_navigation(bool handled) {
+        if (!handled) {
+            error_bell();
+        }
+        return true;
+    }
+
+    private bool focus_is_in(Gtk.Widget focus, Gtk.Widget container) {
+        return focus == container || focus.is_ancestor(container);
+    }
+
+    private bool is_bare_key(Gdk.EventKey event, uint keyval) {
+        return Gdk.keyval_to_lower(event.keyval) == keyval &&
+            (event.state & Gtk.accelerator_get_default_mod_mask()) == 0;
+    }
+
+    private bool is_shift_key(Gdk.EventKey event, uint keyval) {
+        Gdk.ModifierType modifiers = (
+            event.state & Gtk.accelerator_get_default_mod_mask()
+        );
+        return Gdk.keyval_to_upper(event.keyval) == keyval &&
+            modifiers == Gdk.ModifierType.SHIFT_MASK;
+    }
+
+    private bool activate_shortcut_entry(ShortcutEntry entry) {
+        string action = entry.detailed_action_name;
+        if (action.has_prefix(Action.Application.GROUP_NAME + ".")) {
+            this.application.activate_action(
+                action.substring(Action.Application.GROUP_NAME.length + 1),
+                null
+            );
+            return true;
+        }
+        if (action.has_prefix(Action.Window.GROUP_NAME + ".")) {
+            activate_action(get_window_action(
+                action.substring(Action.Window.GROUP_NAME.length + 1)
+            ));
+            return true;
+        }
+        return false;
+    }
+
     private SimpleAction get_window_action(string name) {
         return (SimpleAction) lookup_action(name);
     }
@@ -2775,6 +3131,12 @@ public class Application.MainWindow :
         }
     }
 
+    private void on_select_first_inbox() {
+        if (!select_first_inbox(true)) {
+            error_bell();
+        }
+    }
+
     private void on_select_inbox(SimpleAction action, Variant? parameter) {
         if (parameter != null) {
             int account_number = parameter.get_int32();
@@ -2851,9 +3213,16 @@ public class Application.MainWindow :
     }
 
     private void on_show_help_overlay() {
-        var overlay = get_help_overlay();
-        overlay.section_name = "conversation";
-        overlay.show();
+        show_help_overlay("conversation");
+    }
+
+    public void show_help_overlay(string section_name) {
+        ShortcutHelpOverlayBuilder.show_for_window(
+            this,
+            section_name,
+            this.application.config,
+            this.application.shortcut_manager
+        );
     }
 
     private void on_show_copy_menu() {

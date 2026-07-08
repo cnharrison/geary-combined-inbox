@@ -51,13 +51,13 @@ internal class FolderList.Scope : Geary.BaseObject {
     public string get_display_name() {
         switch (this.kind) {
         case LIST_ALL:
-            return _("All Accounts");
+            return _("All Account Folders");
 
         case ACCOUNT:
             return this.account.information.display_name;
 
         case UNIFIED:
-            return _("Unified Folders");
+            return _("All Accounts");
 
         default:
             assert_not_reached();

@@ -84,6 +84,8 @@ test_client_sources = [
   'client/application/application-client-test.vala',
   'client/application/application-configuration-test.vala',
   'client/application/application-location-test.vala',
+  'client/application/application-shortcut-manager-test.vala',
+  'client/application/application-shortcut-registry-test.vala',
   'client/components/components-validator-test.vala',
   'client/components/components-web-view-test-case.vala',
   'client/components/components-web-view-test.vala',

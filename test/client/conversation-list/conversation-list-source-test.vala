@@ -18,6 +18,10 @@ public class ConversationList.SourceTest : TestCase {
             aggregate_updates_child_window_counts
         );
         add_test(
+            "aggregate_reports_can_load_more",
+            aggregate_reports_can_load_more
+        );
+        add_test(
             "aggregate_forwards_added_and_removed",
             aggregate_forwards_added_and_removed
         );
@@ -53,6 +57,17 @@ public class ConversationList.SourceTest : TestCase {
         assert_equal<int?>(first.min_window_count, 100);
         assert_equal<int?>(second.min_window_count, 100);
         assert_equal<int?>(aggregate.min_window_count, 100);
+    }
+
+    public void aggregate_reports_can_load_more() throws GLib.Error {
+        TestSource first = new TestSource();
+        TestSource second = new TestSource();
+        AggregateSource aggregate = new AggregateSource(to_sources(first, second));
+        assert(!aggregate.can_load_more);
+
+        second = new TestSource(0, true);
+        aggregate = new AggregateSource(to_sources(first, second));
+        assert(aggregate.can_load_more);
     }
 
     public void aggregate_forwards_added_and_removed() throws GLib.Error {
@@ -255,19 +270,25 @@ public class ConversationList.SourceTest : TestCase {
     private class TestSource : Geary.BaseObject, ConversationSource {
 
         public int min_window_count { get; set; default = 0; }
+        public bool can_load_more { get { return this._can_load_more; } }
+        private bool _can_load_more;
 
         private Geary.Folder source_folder;
 
-        internal TestSource(int min_window_count = 0) {
+        internal TestSource(int min_window_count = 0,
+                            bool can_load_more = false) {
             this.min_window_count = min_window_count;
+            this._can_load_more = can_load_more;
             this.source_folder = new_folder("test-source");
         }
 
         internal TestSource.with_folder(
             Geary.Folder source_folder,
-            int min_window_count = 0
+            int min_window_count = 0,
+            bool can_load_more = false
         ) {
             this.min_window_count = min_window_count;
+            this._can_load_more = can_load_more;
             this.source_folder = source_folder;
         }
 

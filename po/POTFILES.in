@@ -31,6 +31,8 @@ src/client/application/application-folder-store-factory.vala
 src/client/application/application-main-window.vala
 src/client/application/application-notification-plugin-context.vala
 src/client/application/application-plugin-manager.vala
+src/client/application/application-shortcut-help-overlay-builder.vala
+src/client/application/application-shortcut-registry.vala
 src/client/application/application-startup-manager.vala
 src/client/application/goa-mediator.vala
 src/client/application/main.vala
@@ -39,6 +41,7 @@ src/client/client-action.vala
 src/client/components/components-attachment-pane.vala
 src/client/components/components-conversation-actions.vala
 src/client/components/components-entry-undo.vala
+src/client/components/components-headerbar-application.vala
 src/client/components/components-in-app-notification.vala
 src/client/components/components-info-bar-stack.vala
 src/client/components/components-info-bar.vala
@@ -86,10 +89,11 @@ src/client/folder-list/folder-list-abstract-folder-entry.vala
 src/client/folder-list/folder-list-account-branch.vala
 src/client/folder-list/folder-list-folder-entry.vala
 src/client/folder-list/folder-list-inbox-folder-entry.vala
-src/client/folder-list/folder-list-inboxes-branch.vala
+src/client/folder-list/folder-list-scope.vala
 src/client/folder-list/folder-list-search-branch.vala
 src/client/folder-list/folder-list-special-grouping.vala
 src/client/folder-list/folder-list-tree.vala
+src/client/folder-list/folder-list-unified-branch.vala
 src/client/plugin/plugin-account.vala
 src/client/plugin/plugin-action-bar.vala
 src/client/plugin/plugin-actionable.vala

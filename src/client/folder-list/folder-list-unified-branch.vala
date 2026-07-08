@@ -36,7 +36,7 @@ public class FolderList.UnifiedBranch : Sidebar.Branch {
 
     public UnifiedBranch() {
         base(
-            new Sidebar.Header(_("Unified")),
+            new Sidebar.Header(_("All Accounts")),
             HIDE_IF_EMPTY | STARTUP_OPEN_GROUPING,
             unified_comparator
         );

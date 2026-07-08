@@ -14,6 +14,10 @@ public class FolderList.TreeTest : TestCase {
         add_test("select_real_inbox", select_real_inbox);
         add_test("select_unified_inbox", select_unified_inbox);
         add_test("select_unified_special_folder", select_unified_special_folder);
+        add_test(
+            "select_next_previous_visible_entry",
+            select_next_previous_visible_entry
+        );
         add_test("account_scope_hides_other_accounts", account_scope_hides_other_accounts);
         add_test(
             "remove_account_clears_unified_inbox_selection",
@@ -124,6 +128,26 @@ public class FolderList.TreeTest : TestCase {
         tree.select_folder(sent.folder);
         assert(tree.selected == sent.folder);
         assert(!tree.selected_is_unified_special_folder(SENT));
+    }
+
+    public void select_next_previous_visible_entry() throws GLib.Error {
+        Tree tree = new Tree();
+        Application.FolderContext first = new_context("first", 3);
+        Application.FolderContext second = new_context("second", 4);
+
+        tree.add_folder(first);
+        tree.add_folder(second);
+
+        assert(tree.select_inbox(first.folder.account));
+        assert(tree.select_next_visible_entry());
+        assert(tree.selected == second.folder);
+        assert(!tree.select_next_visible_entry());
+        assert(tree.selected == second.folder);
+
+        assert(tree.select_previous_visible_entry());
+        assert(tree.selected == first.folder);
+        assert(!tree.select_previous_visible_entry());
+        assert(tree.selected == first.folder);
     }
 
     public void account_scope_hides_other_accounts() throws GLib.Error {

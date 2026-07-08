@@ -1,14 +1,22 @@
-# geary-combined-inbox
+# Geary Modernized
 
-A personal downstream fork of GNOME Geary that adds a virtual **Combined Inbox** that shows all account inboxes in one list while keeping messages in their real accounts and folders.
+Geary Modernized is a personal downstream fork of [GNOME Geary](https://gitlab.gnome.org/GNOME/geary) with modern features.
+
+## All Accounts View
+
+Geary Modernized provides an **All Accounts View** for common folders like Inbox, Starred, Sent, Archive, All Mail, Trash, and Junk. It combines matching folders across accounts without creating server-side IMAP folders or moving messages out of their real accounts.
+
+## Keyboard shortcuts
+
+Geary Modernized includes preset keyboard themes for Gmail and Vim style. Unlike upstream Geary, it supports Gmail-style two-key shortcuts such as `g i`.
 
 ## Status
 
-Dogfood
+Alpha
 
 ## Upstream
 
-Based on [GNOME Geary](https://gitlab.gnome.org/GNOME/geary).
+Based on GNOME Geary.
 
 Related upstream issue: [GNOME/geary#53](https://gitlab.gnome.org/GNOME/geary/-/issues/53).
 

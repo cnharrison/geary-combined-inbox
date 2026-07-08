@@ -223,6 +223,9 @@ public class Application.Client : Gtk.Application {
     private File exec_dir;
     private string binary;
     private Gtk.CssProvider single_key_shortcuts = new Gtk.CssProvider();
+    internal ShortcutManager? shortcut_manager {
+        get; private set; default = null;
+    }
     private GLib.Cancellable controller_cancellable = new GLib.Cancellable();
     private Components.Inspector? inspector = null;
     private Geary.Nonblocking.Mutex controller_mutex = new Geary.Nonblocking.Mutex();
@@ -354,24 +357,23 @@ public class Application.Client : Gtk.Application {
 
         this.engine = new Geary.Engine(get_resource_directory());
         this.config = new Configuration(SCHEMA_ID);
+        this.shortcut_manager = new ShortcutManager(this, null, this.config);
         this.autostart = new StartupManager(this);
 
         // Ensure all geary windows have an icon
         Gtk.Window.set_default_icon_name(Config.APP_ID);
 
-        // Application accels
-        add_app_accelerators(Action.Application.COMPOSE, { "<Ctrl>N" });
-        add_app_accelerators(Action.Application.HELP, { "F1" });
-        add_app_accelerators(Action.Application.INSPECT, { "<Alt><Shift>I" });
-        add_app_accelerators(Action.Application.NEW_WINDOW, { "<Ctrl><Shift>N" });
-        add_app_accelerators(Action.Application.QUIT, { "<Ctrl>Q" });
-
-        // Common window accels
-        add_window_accelerators(Action.Window.CLOSE, { "<Ctrl>W" });
-        add_window_accelerators(
-            Action.Window.SHORTCUT_HELP, { "<Ctrl>F1", "<Ctrl>question" }
+        // Registry-backed accels for the active shortcut scheme.
+        this.shortcut_manager.apply_scheme(this.config.keyboard_shortcut_scheme);
+        this.config.notify[Configuration.KEYBOARD_SHORTCUT_SCHEME].connect(
+            on_keyboard_shortcut_scheme_changed
         );
-        add_window_accelerators(Action.Window.SHOW_MENU, { "F10" });
+        this.config.settings.changed[
+            Configuration.KEYBOARD_SHORTCUT_CUSTOM_PROFILE
+        ].connect(on_keyboard_shortcut_custom_profile_changed);
+
+        // Application accels not yet represented in the shortcut registry.
+        add_app_accelerators(Action.Application.INSPECT, { "<Alt><Shift>I" });
 
         // Common edit accels
         add_edit_accelerators(Action.Edit.COPY, { "<Ctrl>C" });
@@ -394,7 +396,6 @@ public class Application.Client : Gtk.Application {
             on_single_key_shortcuts_toggled
         );
 
-        MainWindow.add_accelerators(this);
         Composer.Editor.add_accelerators(this);
         Composer.Widget.add_accelerators(this);
         Components.Inspector.add_accelerators(this);
@@ -448,6 +449,7 @@ public class Application.Client : Gtk.Application {
 
         this.engine = null;
         this.config = null;
+        this.shortcut_manager = null;
         this.autostart = null;
 
         Util.Date.terminate();
@@ -1101,18 +1103,12 @@ public class Application.Client : Gtk.Application {
     }
 
     private void update_single_key_shortcuts() {
-        if (this.config.single_key_shortcuts) {
-            Gtk.StyleContext.add_provider_for_screen(
-                Gdk.Display.get_default().get_default_screen(),
-                this.single_key_shortcuts,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-            );
-        } else {
-            Gtk.StyleContext.remove_provider_for_screen(
-                Gdk.Display.get_default().get_default_screen(),
-                this.single_key_shortcuts
-            );
-        }
+        // The legacy CSS keybinding path is superseded by ShortcutManager's
+        // focus-aware dispatcher. Keep it removed to avoid duplicate handling.
+        Gtk.StyleContext.remove_provider_for_screen(
+            Gdk.Display.get_default().get_default_screen(),
+            this.single_key_shortcuts
+        );
     }
 
     private void load_css(Gtk.CssProvider provider, string resource_uri) {
@@ -1273,6 +1269,35 @@ public class Application.Client : Gtk.Application {
 
     private void on_single_key_shortcuts_toggled() {
         update_single_key_shortcuts();
+    }
+
+    private void on_keyboard_shortcut_scheme_changed() {
+        ShortcutScheme scheme = this.config.keyboard_shortcut_scheme;
+        if (scheme == ShortcutScheme.CUSTOM &&
+            !this.config.has_custom_shortcut_profile) {
+            this.config.keyboard_shortcut_scheme = ShortcutScheme.CLASSIC_GEARY;
+            return;
+        }
+
+        if (this.shortcut_manager != null) {
+            this.shortcut_manager.apply_scheme(scheme);
+        }
+        update_single_key_shortcuts();
+    }
+
+    private void on_keyboard_shortcut_custom_profile_changed() {
+        if (this.config.keyboard_shortcut_scheme != ShortcutScheme.CUSTOM) {
+            return;
+        }
+
+        if (!this.config.has_custom_shortcut_profile) {
+            this.config.keyboard_shortcut_scheme = ShortcutScheme.CLASSIC_GEARY;
+            return;
+        }
+
+        if (this.shortcut_manager != null) {
+            this.shortcut_manager.apply_scheme(ShortcutScheme.CUSTOM);
+        }
     }
 
     private void on_css_parse_error(Gtk.CssSection section, GLib.Error error) {

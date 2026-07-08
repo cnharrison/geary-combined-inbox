@@ -23,7 +23,7 @@ public class FolderList.ScopeTest : TestCase {
         assert(scope.is_list_all);
         assert(!scope.is_account);
         assert(!scope.is_unified);
-        assert_equal(scope.get_display_name(), "All Accounts");
+        assert_equal(scope.get_display_name(), "All Account Folders");
     }
 
     public void account() throws GLib.Error {
@@ -46,7 +46,7 @@ public class FolderList.ScopeTest : TestCase {
         assert(!scope.is_list_all);
         assert(!scope.is_account);
         assert(scope.is_unified);
-        assert_equal(scope.get_display_name(), "Unified Folders");
+        assert_equal(scope.get_display_name(), "All Accounts");
     }
 
     public void equality() throws GLib.Error {

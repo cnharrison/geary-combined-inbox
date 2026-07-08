@@ -49,6 +49,8 @@ int main(string[] args) {
     client.add_suite(new Application.ClientTest().steal_suite());
     client.add_suite(new Application.ConfigurationTest().steal_suite());
     client.add_suite(new Application.LocationTest().steal_suite());
+    client.add_suite(new Application.ShortcutManagerTest().steal_suite());
+    client.add_suite(new Application.ShortcutRegistryTest().steal_suite());
     client.add_suite(new Components.WebViewTest().steal_suite());
     client.add_suite(new Components.ValidatorTest().steal_suite());
     client.add_suite(new ConversationList.SourceTest().steal_suite());

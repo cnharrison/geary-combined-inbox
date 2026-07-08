@@ -645,14 +645,61 @@ public class ConversationListBox : Gtk.ListBox, Geary.BaseInterface {
     /** Keyboard action to shift focus to the next message, if any. */
     [Signal (action=true)]
     public virtual signal void focus_next() {
-        this.move_cursor(Gtk.MovementStep.DISPLAY_LINES, 1);
-        this.mark_read_timer.start();
+        focus_next_message();
     }
 
     /** Keyboard action to shift focus to the prev message, if any. */
     [Signal (action=true)]
     public virtual signal void focus_prev() {
-        this.move_cursor(Gtk.MovementStep.DISPLAY_LINES, -1);
+        focus_previous_message();
+    }
+
+    public void focus_next_message() {
+        focus_message(Gtk.MovementStep.DISPLAY_LINES, 1);
+    }
+
+    public void focus_previous_message() {
+        focus_message(Gtk.MovementStep.DISPLAY_LINES, -1);
+    }
+
+    public bool focus_first_message() {
+        return focus_edge_message(false);
+    }
+
+    public bool focus_last_message() {
+        return focus_edge_message(true);
+    }
+
+    private bool focus_edge_message(bool last) {
+        EmailRow? row = get_edge_message_row(last);
+        if (row == null) {
+            return false;
+        }
+
+        row.grab_focus();
+        scroll_to_row(row);
+        this.mark_read_timer.start();
+        return true;
+    }
+
+    private EmailRow? get_edge_message_row(bool last) {
+        EmailRow? edge = null;
+        var children = get_children();
+        unowned List<weak Gtk.Widget> child;
+        for (child = children; child != null; child = child.next) {
+            EmailRow? row = child.data as EmailRow;
+            if (row != null) {
+                edge = row;
+                if (!last) {
+                    break;
+                }
+            }
+        }
+        return edge;
+    }
+
+    private void focus_message(Gtk.MovementStep step, int count) {
+        this.move_cursor(step, count);
         this.mark_read_timer.start();
     }
 

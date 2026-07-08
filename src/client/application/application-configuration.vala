@@ -32,6 +32,13 @@ public class Application.Configuration : Geary.BaseObject {
     public const string WINDOW_MAXIMIZE_KEY = "window-maximize";
     public const string WINDOW_WIDTH_KEY = "window-width";
     public const string IMAGES_TRUSTED_DOMAINS = "images-trusted-domains";
+    public const string KEYBOARD_SHORTCUT_SCHEME = "keyboard-shortcut-scheme";
+    public const string KEYBOARD_SHORTCUT_SCHEME_MIGRATED =
+        "keyboard-shortcut-scheme-migrated";
+    public const string KEYBOARD_SHORTCUT_CUSTOM_PROFILE =
+        "keyboard-shortcut-custom-profile";
+    public const string KEYBOARD_SHORTCUT_CUSTOM_PROFILE_BASE =
+        "keyboard-shortcut-custom-profile-base";
 
 
     public enum DesktopEnvironment {
@@ -106,6 +113,41 @@ public class Application.Configuration : Geary.BaseObject {
 
     public bool single_key_shortcuts { get; set; default = false; }
 
+    public ShortcutScheme keyboard_shortcut_scheme {
+        get {
+            return ShortcutScheme.from_setting(
+                settings.get_string(KEYBOARD_SHORTCUT_SCHEME)
+            );
+        }
+        set {
+            ShortcutScheme scheme = value;
+            if (scheme == ShortcutScheme.CUSTOM && !has_custom_shortcut_profile) {
+                scheme = ShortcutScheme.CLASSIC_GEARY;
+            }
+            set_string(KEYBOARD_SHORTCUT_SCHEME, scheme.to_setting());
+        }
+    }
+
+    public bool has_custom_shortcut_profile {
+        get {
+            return settings.get_value(
+                KEYBOARD_SHORTCUT_CUSTOM_PROFILE
+            ).n_children() > 0;
+        }
+    }
+
+    public ShortcutScheme custom_shortcut_profile_base {
+        get {
+            return ShortcutScheme.from_setting(
+                settings.get_string(KEYBOARD_SHORTCUT_CUSTOM_PROFILE_BASE)
+            );
+        }
+        set {
+            assert(value != ShortcutScheme.CUSTOM);
+            set_string(KEYBOARD_SHORTCUT_CUSTOM_PROFILE_BASE, value.to_setting());
+        }
+    }
+
     public bool run_in_background {
         get { return settings.get_boolean(RUN_IN_BACKGROUND_KEY); }
         set { set_boolean(RUN_IN_BACKGROUND_KEY, value); }
@@ -153,6 +195,8 @@ public class Application.Configuration : Geary.BaseObject {
         gnome_interface = new Settings("org.gnome.desktop.interface");
 
         Util.Migrate.old_app_config(settings);
+        migrate_keyboard_shortcut_scheme();
+        normalize_custom_shortcut_scheme();
 
         this.bind(SINGLE_KEY_SHORTCUTS, this, SINGLE_KEY_SHORTCUTS);
     }
@@ -172,9 +216,54 @@ public class Application.Configuration : Geary.BaseObject {
         );
     }
 
+    private void migrate_keyboard_shortcut_scheme() {
+        if (settings.get_boolean(KEYBOARD_SHORTCUT_SCHEME_MIGRATED)) {
+            return;
+        }
+
+        if (settings.get_boolean(SINGLE_KEY_SHORTCUTS)) {
+            this.keyboard_shortcut_scheme = ShortcutScheme.GMAIL;
+        }
+        set_boolean(KEYBOARD_SHORTCUT_SCHEME_MIGRATED, true);
+    }
+
+    private void normalize_custom_shortcut_scheme() {
+        if (this.keyboard_shortcut_scheme == ShortcutScheme.CUSTOM &&
+            !this.has_custom_shortcut_profile) {
+            this.keyboard_shortcut_scheme = ShortcutScheme.CLASSIC_GEARY;
+        }
+    }
+
     private void set_boolean(string name, bool value) {
         if (!settings.set_boolean(name, value))
             message("Unable to set configuration value %s = %s", name, value.to_string());
+    }
+
+    private void set_string(string name, string value) {
+        if (!settings.set_string(name, value))
+            message("Unable to set configuration value %s = %s", name, value);
+    }
+
+    private void set_value(string name, GLib.Variant value) {
+        if (!settings.set_value(name, value)) {
+            message("Unable to set configuration value %s", name);
+        }
+    }
+
+    public GLib.Variant get_custom_shortcut_profile() {
+        return settings.get_value(KEYBOARD_SHORTCUT_CUSTOM_PROFILE);
+    }
+
+    public void set_custom_shortcut_profile(GLib.Variant profile) {
+        set_value(KEYBOARD_SHORTCUT_CUSTOM_PROFILE, profile);
+    }
+
+    public void reset_custom_shortcut_profile() {
+        settings.reset(KEYBOARD_SHORTCUT_CUSTOM_PROFILE);
+        settings.reset(KEYBOARD_SHORTCUT_CUSTOM_PROFILE_BASE);
+        if (this.keyboard_shortcut_scheme == ShortcutScheme.CUSTOM) {
+            this.keyboard_shortcut_scheme = ShortcutScheme.CLASSIC_GEARY;
+        }
     }
 
     /** Returns the saved size of the composer window. */

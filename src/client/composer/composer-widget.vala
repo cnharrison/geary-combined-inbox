@@ -2484,9 +2484,25 @@ public class Composer.Widget : Gtk.EventBox, Geary.BaseInterface {
     }
 
     private void on_show_help_overlay() {
-        var overlay = this.container.top_window.get_help_overlay();
-        overlay.section_name = "composer";
-        overlay.show();
+        Gtk.ApplicationWindow? top = null;
+        if (this.container != null) {
+            top = this.container.top_window;
+        }
+        if (top == null) {
+            return;
+        }
+
+        Application.Client? application = top.application as Application.Client;
+        if (application == null) {
+            return;
+        }
+
+        Application.ShortcutHelpOverlayBuilder.show_for_window(
+            top,
+            "composer",
+            application.config,
+            application.shortcut_manager
+        );
     }
 
     private void on_discard() {

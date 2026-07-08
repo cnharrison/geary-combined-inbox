@@ -60,10 +60,10 @@ public class Components.ApplicationHeaderBar : Hdy.HeaderBar {
         public string get_display_name() {
             switch (this.kind) {
             case LIST_ALL:
-                return _("All Accounts");
+                return _("All Account Folders");
 
             case UNIFIED:
-                return _("Unified Folders");
+                return _("All Accounts");
 
             case ACCOUNT:
                 return this.source_account.information.display_name;
@@ -146,6 +146,11 @@ public class Components.ApplicationHeaderBar : Hdy.HeaderBar {
         this.scope_menu_button.no_show_all = true;
         this.scope_menu_button.tooltip_text = _("Choose folder scope");
         this.scope_menu_button.get_accessible().set_name(_("Folder Scope"));
+
+        // The list-all scope remains an internal fallback; the visible
+        // "All Accounts" choice is the unified-folder scope.
+        this.list_all_scope_row.no_show_all = true;
+        this.list_all_scope_row.set_visible(false);
         this.unified_scope_row.no_show_all = true;
         this.custom_title = this.scope_menu_button;
 
@@ -189,6 +194,7 @@ public class Components.ApplicationHeaderBar : Hdy.HeaderBar {
             set_scope_list_all();
         }
 
+        this.list_all_scope_row.set_visible(false);
         this.unified_scope_row.set_visible(available);
         this.scope_menu_button.set_visible(available);
         this.scope_list.invalidate_headers();

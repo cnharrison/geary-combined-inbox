@@ -11,6 +11,10 @@ public class ConversationList.Model : Object, ListModel {
     internal GLib.GenericArray<Geary.App.Conversation> items = new GLib.GenericArray<Geary.App.Conversation>();
     internal ConversationSource source { get; set; }
 
+    public bool can_load_more {
+        get { return this.source.can_load_more; }
+    }
+
     private bool scanning = false;
 
     internal Model(ConversationSource source) {
@@ -69,7 +73,7 @@ public class ConversationList.Model : Object, ListModel {
     }
 
     public bool load_more(int amount) {
-        if (this.scanning) {
+        if (this.scanning || !this.can_load_more) {
             return false;
         }
 

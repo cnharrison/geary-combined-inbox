@@ -42,6 +42,9 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
 
     private Application.Configuration config;
     private bool show_account_context = false;
+    private bool selecting_last_conversation = false;
+    private bool follow_last_conversation_after_load = false;
+    private bool suppress_next_load_more = false;
 
     private Gtk.GestureMultiPress press_gesture;
     private Gtk.GestureLongPress long_press_gesture;
@@ -162,13 +165,12 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
     /**
      * Attempt to load more conversations from the current monitor
      */
-    public void load_more(int request) {
-        if (model != null) {
-            model.load_more(request);
-        }
+    public bool load_more(int request) {
+        return model != null && model.load_more(request);
     }
 
     public void scroll(Gtk.ScrollType scroll_type) {
+        this.follow_last_conversation_after_load = false;
         Gtk.ListBoxRow row = this.list.get_selected_row();
 
         if (row == null) {
@@ -185,6 +187,91 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
         if (row != null) {
             this.list.select_row(row);
         }
+    }
+
+    public bool select_first_conversation() {
+        this.follow_last_conversation_after_load = false;
+        return select_conversation_at_index(0, false);
+    }
+
+    public bool select_last_conversation() {
+        this.follow_last_conversation_after_load = false;
+        return select_last_loaded_conversation(false);
+    }
+
+    private bool select_last_loaded_conversation(bool suppress_load_more) {
+        Model? model = this.model;
+        if (model == null || model.get_n_items() == 0) {
+            this.follow_last_conversation_after_load = false;
+            return false;
+        }
+
+        this.selecting_last_conversation = true;
+        bool selected = select_conversation_at_index(
+            (int) model.get_n_items() - 1,
+            true,
+            suppress_load_more
+        );
+        this.selecting_last_conversation = false;
+        if (!selected) {
+            this.follow_last_conversation_after_load = false;
+        }
+        return selected;
+    }
+
+    private bool select_conversation_at_index(int index,
+                                              bool scroll_to_end,
+                                              bool suppress_load_more = false) {
+        Gtk.ListBoxRow? row = this.list.get_row_at_index(index);
+        if (row == null) {
+            return false;
+        }
+
+        this.list.select_row(row);
+        row.grab_focus();
+        scroll_to_conversation(row, scroll_to_end, suppress_load_more);
+        return true;
+    }
+
+    private void scroll_to_conversation(Gtk.ListBoxRow row,
+                                        bool end,
+                                        bool suppress_load_more) {
+        Gtk.Allocation? allocation = null;
+        row.get_allocation(out allocation);
+
+        double value = end
+            ? allocation.y + allocation.height - this.vadjustment.page_size
+            : allocation.y;
+        value = clamp_scroll_value(value);
+        // Leave room for a later user scroll or G press to request the
+        // next page without immediately cascading load-more requests.
+        if (suppress_load_more && end && can_load_more() &&
+            value > this.vadjustment.lower) {
+            value -= 1.0;
+        }
+
+        this.suppress_next_load_more = suppress_load_more;
+        this.vadjustment.value = value;
+        this.suppress_next_load_more = false;
+    }
+
+    private bool can_load_more() {
+        return this.model != null && this.model.can_load_more;
+    }
+
+    private double clamp_scroll_value(double value) {
+        double lower = this.vadjustment.lower;
+        double upper = this.vadjustment.upper - this.vadjustment.page_size;
+        if (upper < lower) {
+            upper = lower;
+        }
+        if (value < lower) {
+            return lower;
+        }
+        if (value > upper) {
+            return upper;
+        }
+        return value;
     }
 
     private Gtk.Widget row_factory(Object convo_obj) {
@@ -471,8 +558,15 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
         double upper = adjustment.get_upper();
         double threshold = upper - adjustment.page_size - LOAD_MORE_THRESHOLD;
 
+        if (this.suppress_next_load_more) {
+            return;
+        }
+
         if (this.is_visible() && adjustment.get_value() >= threshold) {
-            this.load_more(LOAD_MORE_COUNT);
+            bool requested = this.load_more(LOAD_MORE_COUNT);
+            if (requested && this.selecting_last_conversation) {
+                this.follow_last_conversation_after_load = true;
+            }
         }
     }
 
@@ -564,9 +658,12 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
     }
 
     private void on_conversations_loaded() {
-        if (this.config.autoselect &&
-            !this.should_inhibit_autoactivate &&
-            this.list.get_selected_rows().length() == 0) {
+        if (this.follow_last_conversation_after_load) {
+            this.follow_last_conversation_after_load = false;
+            select_last_loaded_conversation(true);
+        } else if (this.config.autoselect &&
+                   !this.should_inhibit_autoactivate &&
+                   this.list.get_selected_rows().length() == 0) {
 
             Gtk.ListBoxRow first_row = this.list.get_row_at_index(0);
             if (first_row != null) {
@@ -710,6 +807,10 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
     }
 
     private void on_selected_rows_changed() {
+        if (!this.selecting_last_conversation) {
+            this.follow_last_conversation_after_load = false;
+        }
+
         var selected = get_selected_conversations();
 
         if (!selection_changed(selected)) {

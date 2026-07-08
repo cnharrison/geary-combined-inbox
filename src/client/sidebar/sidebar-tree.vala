@@ -270,6 +270,32 @@ public class Sidebar.Tree : Gtk.TreeView {
         return get_selection().count_selected_rows() != 0;
     }
 
+    public bool select_next_visible_entry() {
+        return select_relative_visible_entry(true);
+    }
+
+    public bool select_previous_visible_entry() {
+        return select_relative_visible_entry(false);
+    }
+
+    public bool expand_selected_branch() {
+        Gtk.TreePath? path = get_current_path();
+        if (path != null && path_has_child(path) && !is_row_expanded(path)) {
+            expand_row(path, false);
+            return true;
+        }
+        return false;
+    }
+
+    public bool collapse_selected_branch() {
+        Gtk.TreePath? path = get_current_path();
+        if (path != null && is_row_expanded(path)) {
+            collapse_row(path);
+            return true;
+        }
+        return false;
+    }
+
     private Gtk.TreePath? get_selected_path() {
         Gtk.TreeModel model;
         Gtk.TreeSelection? selection = get_selection();
@@ -280,6 +306,86 @@ public class Sidebar.Tree : Gtk.TreeView {
         assert(rows.length() == 0 || rows.length() == 1);
 
         return rows.length() != 0 ? rows.nth_data(0) : null;
+    }
+
+    private bool select_relative_visible_entry(bool next) {
+        Gtk.TreePath? path = get_current_path();
+        while (path != null) {
+            path = next ? get_next_visible_path(path) : get_previous_visible_path(path);
+            if (path != null && select_visible_entry(path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool select_visible_entry(Gtk.TreePath path) {
+        EntryWrapper? wrapper = get_wrapper_at_path(path);
+        if (wrapper == null || !(wrapper.entry is Sidebar.SelectableEntry)) {
+            return false;
+        }
+
+        get_selection().select_path(path);
+        set_cursor(path, null, false);
+        scroll_to_cell(path, null, false, 0, 0);
+        return true;
+    }
+
+    private Gtk.TreePath? get_next_visible_path(Gtk.TreePath path) {
+        if (is_row_expanded(path) && path_has_child(path)) {
+            Gtk.TreePath child = path.copy();
+            child.down();
+            return child;
+        }
+
+        Gtk.TreePath base_path = path.copy();
+        while (true) {
+            Gtk.TreePath sibling = base_path.copy();
+            sibling.next();
+            if (path_exists(sibling)) {
+                return sibling;
+            }
+            if (!base_path.up() || base_path.get_depth() == 0) {
+                return null;
+            }
+        }
+    }
+
+    private Gtk.TreePath? get_previous_visible_path(Gtk.TreePath path) {
+        Gtk.TreePath previous = path.copy();
+        if (previous.prev()) {
+            return get_last_visible_descendant(previous);
+        }
+        return previous.up() && previous.get_depth() > 0 ? previous : null;
+    }
+
+    private Gtk.TreePath get_last_visible_descendant(Gtk.TreePath path) {
+        Gtk.TreePath descendant = path.copy();
+        while (is_row_expanded(descendant) && path_has_child(descendant)) {
+            Gtk.TreeIter iter;
+            if (!store.get_iter(out iter, descendant)) {
+                break;
+            }
+
+            int child_count = store.iter_n_children(iter);
+            Gtk.TreePath child = descendant.copy();
+            child.down();
+            for (int i = 1; i < child_count; i++) {
+                child.next();
+            }
+            descendant = child;
+        }
+        return descendant;
+    }
+
+    private bool path_has_child(Gtk.TreePath path) {
+        Gtk.TreeIter iter;
+        return store.get_iter(out iter, path) && store.iter_has_child(iter);
+    }
+
+    private bool path_exists(Gtk.TreePath path) {
+        Gtk.TreeIter iter;
+        return store.get_iter(out iter, path);
     }
 
     private string get_name_for_entry(Sidebar.Entry entry) {

@@ -18,6 +18,9 @@ internal interface ConversationList.ConversationSource : GLib.Object {
     /** Minimum number of conversations the source should keep loaded. */
     public abstract int min_window_count { get; set; }
 
+    /** Determines if the source can load more conversations. */
+    public abstract bool can_load_more { get; }
+
     public signal void conversations_added(
         Gee.Collection<Geary.App.Conversation> conversations
     );
@@ -65,6 +68,17 @@ internal class ConversationList.AggregateSource : Geary.BaseObject, Conversation
         }
     }
     private int _min_window_count = 0;
+
+    public bool can_load_more {
+        get {
+            foreach (ConversationSource source in this.sources) {
+                if (source.can_load_more) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
 
     private Gee.Collection<ConversationSource> sources;
     private Gee.Map<ConversationSource,Gee.List<ulong>> source_signal_ids =
@@ -262,6 +276,10 @@ internal class ConversationList.MonitorSource : Geary.BaseObject, ConversationSo
     public int min_window_count {
         get { return this.monitor.min_window_count; }
         set { this.monitor.min_window_count = value; }
+    }
+
+    public bool can_load_more {
+        get { return this.monitor.can_load_more; }
     }
 
     private Geary.App.ConversationMonitor monitor;
