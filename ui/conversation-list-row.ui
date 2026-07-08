@@ -60,19 +60,61 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkLabel" id="preview">
+                  <object class="GtkBox" id="preview_row">
                     <property name="visible">True</property>
                     <property name="halign">start</property>
                     <property name="hexpand">True</property>
-                    <property name="wrap">True</property>
-                    <property name="wrap-mode">word-char</property>
-                    <property name="ellipsize">end</property>
-                    <property name="lines">1</property>
-                    <property name="xalign">0</property>
+                    <property name="spacing">4</property>
                     <style>
                       <class name="preview"/>
-                      <class name="tertiary"/>
                     </style>
+                    <child>
+                      <object class="GtkLabel" id="account_context">
+                        <property name="visible">False</property>
+                        <property name="ellipsize">end</property>
+                        <property name="max-width-chars">18</property>
+                        <property name="single-line-mode">True</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="tertiary"/>
+                          <class name="account-context"/>
+                        </style>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="account_separator">
+                        <property name="visible">False</property>
+                        <property name="label">·</property>
+                        <style>
+                          <class name="tertiary"/>
+                        </style>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="preview">
+                        <property name="visible">True</property>
+                        <property name="halign">start</property>
+                        <property name="hexpand">True</property>
+                        <property name="ellipsize">end</property>
+                        <property name="single-line-mode">True</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="tertiary"/>
+                        </style>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                      </packing>
+                    </child>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -90,7 +132,7 @@
                 <property name="visible">True</property>
                 <property name="vexpand">True</property>
                 <property name="orientation">vertical</property>
-                 <child>
+                <child>
                   <object class="GtkLabel" id="date">
                     <property name="visible">True</property>
                     <style>

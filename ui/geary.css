@@ -82,6 +82,10 @@ row.conversation-list .preview {
   padding-left: 0.6em;
 }
 
+row.conversation-list .account-context {
+  font-weight: bold;
+}
+
 row.conversation-list .date {
   margin-left: 1em;
 }

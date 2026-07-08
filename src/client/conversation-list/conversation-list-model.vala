@@ -9,34 +9,42 @@
 // The whole goal of this class to wrap the ConversationMonitor with a view that presents a sorted list
 public class ConversationList.Model : Object, ListModel {
     internal GLib.GenericArray<Geary.App.Conversation> items = new GLib.GenericArray<Geary.App.Conversation>();
-    internal Geary.App.ConversationMonitor monitor { get; set; }
+    internal ConversationSource source { get; set; }
 
     private bool scanning = false;
 
-    internal Model(Geary.App.ConversationMonitor monitor) {
-        this.monitor = monitor;
+    internal Model(ConversationSource source) {
+        this.source = source;
 
-        monitor.conversations_added.connect(on_conversations_added);
-        monitor.conversation_appended.connect(on_conversation_updated);
-        monitor.conversation_trimmed.connect(on_conversation_updated);
-        monitor.conversations_removed.connect(on_conversations_removed);
-        monitor.scan_started.connect(on_scan_started);
-        monitor.scan_completed.connect(on_scan_completed);
+        source.conversations_added.connect(on_conversations_added);
+        source.conversation_appended.connect(on_conversation_updated);
+        source.conversation_trimmed.connect(on_conversation_updated);
+        source.conversations_removed.connect(on_conversations_removed);
+        source.scan_started.connect(on_scan_started);
+        source.scan_completed.connect(on_scan_completed);
     }
 
     ~Model() {
-        this.monitor.conversations_added.disconnect(on_conversations_added);
-        this.monitor.conversation_appended.disconnect(on_conversation_updated);
-        this.monitor.conversation_trimmed.disconnect(on_conversation_updated);
-        this.monitor.conversations_removed.disconnect(on_conversations_removed);
-        this.monitor.scan_started.disconnect(on_scan_started);
-        this.monitor.scan_completed.disconnect(on_scan_completed);
+        this.source.conversations_added.disconnect(on_conversations_added);
+        this.source.conversation_appended.disconnect(on_conversation_updated);
+        this.source.conversation_trimmed.disconnect(on_conversation_updated);
+        this.source.conversations_removed.disconnect(on_conversations_removed);
+        this.source.scan_started.disconnect(on_scan_started);
+        this.source.scan_completed.disconnect(on_scan_completed);
     }
 
     public signal void conversations_added(bool start);
     public signal void conversations_removed(bool start);
     public signal void conversations_loaded();
     public signal void conversation_updated(Geary.App.Conversation convo);
+
+    internal Geary.Folder get_source_folder(Geary.App.Conversation conversation) {
+        return this.source.get_source_folder(conversation);
+    }
+
+    internal string get_account_context(Geary.App.Conversation conversation) {
+        return this.source.get_account_context(conversation);
+    }
 
     private static int compare(Object a, Object b) {
         return Util.Email.compare_conversation_descending(a as Geary.App.Conversation, b as Geary.App.Conversation);
@@ -46,11 +54,11 @@ public class ConversationList.Model : Object, ListModel {
     //  Scanning and load_more
     // ------------------------
 
-    private void on_scan_started(Geary.App.ConversationMonitor source) {
+    private void on_scan_started(ConversationSource source) {
         this.scanning = true;
     }
 
-    private void on_scan_completed(Geary.App.ConversationMonitor source) {
+    private void on_scan_completed(ConversationSource source) {
         this.scanning = false;
         GLib.Timeout.add(100, () => {
             if (!this.scanning) {
@@ -65,7 +73,7 @@ public class ConversationList.Model : Object, ListModel {
             return false;
         }
 
-        this.monitor.min_window_count += amount;
+        this.source.min_window_count += amount;
         return true;
     }
 
@@ -194,7 +202,7 @@ public class ConversationList.Model : Object, ListModel {
         debug("Removed %ld/%d conversations.", removed, conversations.size);
     }
 
-    private void on_conversation_updated(Geary.App.ConversationMonitor sender, Geary.App.Conversation convo, Gee.Collection<Geary.Email> emails) {
+    private void on_conversation_updated(ConversationSource sender, Geary.App.Conversation convo, Gee.Collection<Geary.Email> emails) {
         conversation_updated(convo);
 
         uint initial_index;

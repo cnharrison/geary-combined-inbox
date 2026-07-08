@@ -41,6 +41,7 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
     }
 
     private Application.Configuration config;
+    private bool show_account_context = false;
 
     private Gtk.GestureMultiPress press_gesture;
     private Gtk.GestureLongPress long_press_gesture;
@@ -129,19 +130,28 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
     private Model? model;
 
     /**
-     * Set the conversation monitor which the listview is displaying
+     * Set the conversation monitor which the listview is displaying.
      */
     public void set_monitor(Geary.App.ConversationMonitor? monitor) {
+        set_source(monitor != null ? new MonitorSource(monitor) : null);
+    }
+
+    /**
+     * Set the conversation source which the listview is displaying.
+     */
+    internal void set_source(ConversationSource? source,
+                             bool show_account_context = false) {
+        this.show_account_context = show_account_context;
         if (this.model != null) {
             this.model.conversations_loaded.disconnect(on_conversations_loaded);
             this.model.conversations_removed.disconnect(on_conversations_removed);
             this.model.conversation_updated.disconnect(on_conversation_updated);
         }
-        if (monitor == null) {
+        if (source == null) {
             this.model = null;
             this.list.bind_model(null, row_factory);
         } else {
-            this.model = new Model(monitor);
+            this.model = new Model(source);
             this.list.bind_model(this.model, row_factory);
             this.model.conversations_loaded.connect(on_conversations_loaded);
             this.model.conversations_removed.connect(on_conversations_removed);
@@ -179,7 +189,14 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
 
     private Gtk.Widget row_factory(Object convo_obj) {
         var convo = (Geary.App.Conversation) convo_obj;
-        var row = new Row(config, convo, this.selection_mode_enabled);
+        var row = new Row(
+            config,
+            convo,
+            this.model.get_source_folder(convo),
+            this.model.get_account_context(convo),
+            this.selection_mode_enabled,
+            this.show_account_context
+        );
         row.toggle_flag.connect(on_toggle_flags);
         row.toggle_selection.connect(on_toggle_selection);
         return row;
@@ -667,7 +684,14 @@ public class ConversationList.View : Gtk.ScrolledWindow, Geary.BaseInterface {
                 this.list.select_row(row);
             }
 
-            this.drag_widget = new Row(this.config, row.conversation, false);
+            this.drag_widget = new Row(
+                this.config,
+                row.conversation,
+                this.model.get_source_folder(row.conversation),
+                this.model.get_account_context(row.conversation),
+                false,
+                this.show_account_context
+            );
             this.drag_widget.width_request = row.get_allocated_width();
             this.drag_widget.get_style_context().add_class("drag-n-drop");
             this.drag_widget.visible = true;

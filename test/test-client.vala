@@ -48,10 +48,17 @@ int main(string[] args) {
     client.add_suite(new Application.CertificateManagerTest().steal_suite());
     client.add_suite(new Application.ClientTest().steal_suite());
     client.add_suite(new Application.ConfigurationTest().steal_suite());
+    client.add_suite(new Application.LocationTest().steal_suite());
     client.add_suite(new Components.WebViewTest().steal_suite());
     client.add_suite(new Components.ValidatorTest().steal_suite());
+    client.add_suite(new ConversationList.SourceTest().steal_suite());
+    client.add_suite(new ConversationList.RowTest().steal_suite());
     client.add_suite(new Composer.WebViewTest().steal_suite());
     client.add_suite(new Composer.WidgetTest().steal_suite());
+    client.add_suite(new FolderList.ScopeTest().steal_suite());
+    client.add_suite(new FolderList.TreeTest().steal_suite());
+    client.add_suite(new FolderList.UnifiedBranchTest().steal_suite());
+    client.add_suite(new FolderList.UnifiedFolderEntryTest().steal_suite());
     client.add_suite(new Util.Cache.Test().steal_suite());
     client.add_suite(new Util.Email.Test().steal_suite());
     client.add_suite(new Util.JS.Test().steal_suite());

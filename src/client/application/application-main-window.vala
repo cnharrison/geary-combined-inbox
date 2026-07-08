@@ -293,10 +293,20 @@ public class Application.MainWindow :
     /** Currently selected folder, null if none selected */
     public Geary.Folder? selected_folder { get; private set; default = null; }
 
+    /** True when the virtual unified inbox is selected. */
+    public bool selected_is_combined_inbox {
+        get { return this.selected_location.is_unified_special_folder(INBOX); }
+    }
+
+    private Location selected_location = new Location.none();
+
     /** Conversations for the current folder, null if none selected */
     public Geary.App.ConversationMonitor? conversations {
         get; private set; default = null;
     }
+
+    private Gee.List<Geary.App.ConversationMonitor> unified_conversations =
+        new Gee.ArrayList<Geary.App.ConversationMonitor>();
 
     /** Specifies if the conversation list is currently displayed. */
     public bool is_folder_list_shown {
@@ -710,7 +720,12 @@ public class Application.MainWindow :
         string title = _("Geary");
         string? account_name = null;
         string? folder_name = null;
-        if (account != null && folder != null) {
+        if (this.selected_location.is_virtual) {
+            folder_name = get_unified_special_folder_title(
+                this.selected_location.special_use
+            );
+            title = folder_name;
+        } else if (account != null && folder != null) {
             account_name = account.account.information.display_name;
             folder_name = folder.display_name;
             /// Translators: Main window title, first string
@@ -760,6 +775,59 @@ public class Application.MainWindow :
         }
     }
 
+    private Geary.App.ConversationMonitor new_conversation_monitor(Geary.Folder folder) {
+        return new Geary.App.ConversationMonitor(
+            folder,
+            // Include fields for the conversation viewer as well so
+            // conversations can be displayed without having to go
+            // back to the db
+            ConversationList.View.REQUIRED_FIELDS |
+            ConversationListBox.REQUIRED_FIELDS |
+            ConversationEmail.REQUIRED_FOR_CONSTRUCT,
+            MIN_CONVERSATION_COUNT
+        );
+    }
+
+    private void close_unified_conversation_monitors() {
+        if (this.unified_conversations.size > 0) {
+            this.conversation_list_view.set_source(null);
+        }
+
+        foreach (Geary.App.ConversationMonitor monitor in this.unified_conversations) {
+            this.progress_monitor.remove(monitor.progress_monitor);
+            close_conversation_monitor(monitor);
+        }
+        this.unified_conversations.clear();
+    }
+
+    private int get_selected_conversation_count() {
+        if (this.conversations != null) {
+            return this.conversations.size;
+        }
+
+        int count = 0;
+        foreach (Geary.App.ConversationMonitor monitor in this.unified_conversations) {
+            count += monitor.size;
+        }
+        return count;
+    }
+
+    private void close_selected_conversation_sources() {
+        this.selected_location = new Location.none();
+        if (this.selected_folder != null) {
+            this.progress_monitor.remove(this.selected_folder.opening_monitor);
+            this.selected_folder.properties.notify.disconnect(update_headerbar);
+            this.selected_folder = null;
+        }
+        if (this.conversations != null) {
+            this.progress_monitor.remove(this.conversations.progress_monitor);
+            close_conversation_monitor(this.conversations);
+            this.conversations = null;
+            this.conversation_list_view.set_monitor(null);
+        }
+        close_unified_conversation_monitors();
+    }
+
     /**
      * Selects and open the given folder.
      *
@@ -770,7 +838,7 @@ public class Application.MainWindow :
     public async void select_folder(Geary.Folder? to_select,
                                     bool is_interactive,
                                     bool inhibit_autoselect = false) {
-        if (this.selected_folder != to_select) {
+        if (this.selected_folder != to_select || this.selected_location.is_virtual) {
             // Cancel any existing folder loading
             this.folder_open.cancel();
             var cancellable = this.folder_open = new GLib.Cancellable();
@@ -780,17 +848,7 @@ public class Application.MainWindow :
             // Dispose of all existing objects for the currently
             // selected model.
 
-            if (this.selected_folder != null) {
-                this.progress_monitor.remove(this.selected_folder.opening_monitor);
-                this.selected_folder.properties.notify.disconnect(update_headerbar);
-                this.selected_folder = null;
-            }
-            if (this.conversations != null) {
-                this.progress_monitor.remove(this.conversations.progress_monitor);
-                close_conversation_monitor(this.conversations);
-                this.conversations = null;
-                this.conversation_list_view.set_monitor(null);
-            }
+            close_selected_conversation_sources();
 
             this.conversation_list_info_bars.remove_all();
 
@@ -799,19 +857,21 @@ public class Application.MainWindow :
 
             select_account(to_select != null ? to_select.account : null);
             this.selected_folder = to_select;
+            this.selected_location = to_select != null
+                ? new Location.for_folder(to_select)
+                : new Location.none();
 
             // Ensure that the folder is selected in the UI if
             // this was called by something other than the
             // selection changed callback. That will check to
             // ensure that we're not setting it again.
             if (to_select != null) {
-                // Prefer the inboxes branch if it is a thing, but
-                // only for non-interactive calls
-                if (is_interactive ||
-                    (to_select.used_as != INBOX ||
-                     !this.folder_list.select_inbox(to_select.account))) {
-                    this.folder_list.select_folder(to_select);
+                if (this.folder_list.current_scope.is_unified ||
+                    (this.folder_list.current_scope.is_account &&
+                     this.folder_list.current_scope.account != to_select.account)) {
+                    set_folder_list_scope(new FolderList.Scope.for_account(to_select.account));
                 }
+                this.folder_list.select_folder(to_select);
             } else {
                 this.folder_list.deselect_folder();
             }
@@ -820,7 +880,6 @@ public class Application.MainWindow :
             update_conversation_actions(NONE);
             update_trash_action();
 
-            this.conversation_viewer.show_loading();
             this.previous_selection_was_interactive = is_interactive;
 
             debug("Folder selected: %s",
@@ -830,19 +889,11 @@ public class Application.MainWindow :
             // loading conversations.
 
             if (to_select != null) {
+                this.conversation_viewer.show_loading();
                 this.progress_monitor.add(to_select.opening_monitor);
                 to_select.properties.notify.connect(update_headerbar);
 
-                this.conversations = new Geary.App.ConversationMonitor(
-                    to_select,
-                    // Include fields for the conversation viewer as well so
-                    // conversations can be displayed without having to go
-                    // back to the db
-                    ConversationList.View.REQUIRED_FIELDS |
-                    ConversationListBox.REQUIRED_FIELDS |
-                    ConversationEmail.REQUIRED_FOR_CONSTRUCT,
-                    MIN_CONVERSATION_COUNT
-                );
+                this.conversations = new_conversation_monitor(to_select);
                 this.progress_monitor.add(this.conversations.progress_monitor);
 
                 if (inhibit_autoselect) {
@@ -852,10 +903,127 @@ public class Application.MainWindow :
 
                 yield open_conversation_monitor(this.conversations, cancellable);
                 yield this.controller.process_pending_composers();
+            } else {
+                this.conversation_viewer.show_none_selected();
             }
         }
 
         update_headerbar();
+    }
+
+    /** Selects and opens a virtual view over all available inboxes. */
+    public async void select_combined_inbox(bool is_interactive) {
+        yield select_unified_special_folder(INBOX, is_interactive);
+    }
+
+    /** Selects and opens a virtual view over matching special-use folders. */
+    public async void select_unified_special_folder(
+        Geary.Folder.SpecialUse special_use,
+        bool is_interactive
+    ) {
+        assert(Location.supports_unified_special_folder(special_use));
+
+        if (!supports_unified_scope()) {
+            debug("Unified folders unavailable with fewer than two inboxes");
+            return;
+        }
+
+        if (!this.folder_list.current_scope.is_unified) {
+            set_folder_list_scope(new FolderList.Scope.unified());
+        }
+
+        if (!this.selected_location.is_unified_special_folder(special_use)) {
+            this.folder_open.cancel();
+            var cancellable = this.folder_open = new GLib.Cancellable();
+
+            this.conversation_list_headerbar.selection_open = false;
+
+            close_selected_conversation_sources();
+
+            this.conversation_list_info_bars.remove_all();
+            select_account(null);
+            this.selected_location = new Location.unified_special_folder(special_use);
+
+            if (!this.folder_list.selected_is_unified_special_folder(special_use)) {
+                this.folder_list.select_unified_special_folder(special_use);
+            }
+
+            update_title();
+            update_conversation_actions(NONE);
+            update_trash_action();
+
+            this.conversation_viewer.show_loading();
+            this.previous_selection_was_interactive = is_interactive;
+
+            debug("Unified %s selected", special_use.to_string());
+
+            var sources = new Gee.ArrayList<ConversationList.ConversationSource>();
+            foreach (Geary.Folder folder in get_matching_special_folders(special_use)) {
+                Geary.App.ConversationMonitor monitor = new_conversation_monitor(folder);
+                this.unified_conversations.add(monitor);
+                this.progress_monitor.add(monitor.progress_monitor);
+                sources.add(new ConversationList.MonitorSource(monitor));
+            }
+
+            if (sources.is_empty) {
+                this.conversation_list_view.set_source(null);
+                this.conversation_viewer.show_empty_folder();
+                update_conversation_actions(NONE);
+            } else {
+                this.conversation_list_view.set_source(
+                    new ConversationList.AggregateSource(sources),
+                    true
+                );
+                foreach (Geary.App.ConversationMonitor monitor in
+                         this.unified_conversations) {
+                    yield open_conversation_monitor(monitor, cancellable);
+                }
+                yield this.controller.process_pending_composers();
+            }
+        }
+
+        update_headerbar();
+    }
+
+    private bool supports_unified_scope() {
+        return get_matching_special_folders(INBOX).size > 1;
+    }
+
+    private void update_scope_controls() {
+        bool supports_unified = supports_unified_scope();
+        this.application_headerbar.set_scope_controls_available(supports_unified);
+        if (!supports_unified && this.folder_list.current_scope.is_unified) {
+            set_folder_list_scope(new FolderList.Scope.list_all());
+            if (this.selected_location.is_virtual) {
+                select_first_inbox(false);
+            }
+        }
+    }
+
+    private Gee.List<Geary.Folder> get_matching_special_folders(
+        Geary.Folder.SpecialUse special_use
+    ) {
+        var folders = new Gee.ArrayList<Geary.Folder>();
+        foreach (AccountContext account in this.controller.get_account_contexts()) {
+            foreach (FolderContext context in account.get_folders()) {
+                if (context.folder.used_as == special_use) {
+                    folders.add(context.folder);
+                }
+            }
+        }
+        return folders;
+    }
+
+    private static string get_unified_special_folder_title(
+        Geary.Folder.SpecialUse special_use
+    ) {
+        if (special_use == INBOX) {
+            return _("Inbox");
+        }
+
+        string? display_name = Util.I18n.to_folder_type_display_name(special_use);
+        assert(display_name != null);
+        return display_name;
     }
 
     /** Selects the given account, folder and conversations. */
@@ -1080,17 +1248,22 @@ public class Application.MainWindow :
     }
 
     internal bool select_first_inbox(bool is_interactive) {
-        bool success = false;
+        if (supports_unified_scope()) {
+            this.select_unified_special_folder.begin(INBOX, is_interactive);
+            return true;
+        }
+
         Geary.Folder? inbox = get_first_inbox();
         if (inbox != null) {
             this.select_folder.begin(inbox, is_interactive);
-            success = true;
+            return true;
         }
-        return success;
+        return false;
     }
 
     private void add_account(AccountContext to_add) {
         if (!this.accounts.contains(to_add)) {
+            this.application_headerbar.add_scope_account(to_add.account);
             this.folder_list.set_user_folders_root_name(
                 to_add.account, _("Labels")
             );
@@ -1128,16 +1301,19 @@ public class Application.MainWindow :
     private async void remove_account(AccountContext to_remove,
                                       Geary.Folder? to_select) {
         if (this.accounts.contains(to_remove)) {
-            // Explicitly unset the selected folder if it belongs to the
+            // Explicitly unset the selected view if it depends on the
             // account so we block until it's gone. This also clears the
             // previous search folder, so it won't try to re-load that
             // that when the account is gone.
-            if (this.selected_folder != null &&
-                this.selected_folder.account == to_remove.account) {
-                bool is_account_search_active = (
-                    this.selected_folder.used_as == SEARCH
-                );
-
+            bool is_selected_account_active = (
+                this.selected_folder != null &&
+                this.selected_folder.account == to_remove.account
+            );
+            bool is_account_search_active = (
+                is_selected_account_active &&
+                this.selected_folder.used_as == SEARCH
+            );
+            if (is_selected_account_active || this.selected_location.is_virtual) {
                 yield select_folder(to_select, false);
 
                 if (is_account_search_active) {
@@ -1160,9 +1336,15 @@ public class Application.MainWindow :
                 this.progress_monitor.remove(smtp.sending_monitor);
             }
 
+            if (this.folder_list.current_scope.is_account &&
+                this.folder_list.current_scope.account == to_remove.account) {
+                set_folder_list_scope(new FolderList.Scope.list_all());
+            }
+
             // Finally, remove the account and its folders
             remove_folders(to_remove.get_folders(), false);
             this.folder_list.remove_account(to_remove.account);
+            this.application_headerbar.remove_scope_account(to_remove.account);
             this.accounts.remove(to_remove);
         }
     }
@@ -1185,6 +1367,7 @@ public class Application.MainWindow :
             this.folder_list.add_folder(context);
             context.folder.use_changed.connect(on_use_changed);
         }
+        update_scope_controls();
     }
 
     /** Removes a folder from the window. */
@@ -1202,6 +1385,7 @@ public class Application.MainWindow :
             folder.use_changed.disconnect(on_use_changed);
             this.folder_list.remove_folder(context);
         }
+        update_scope_controls();
     }
 
     private AccountContext? get_selected_account_context() {
@@ -1214,19 +1398,180 @@ public class Application.MainWindow :
         return context;
     }
 
-    private Geary.Folder? get_first_inbox() {
-        Geary.Folder? inbox = null;
-        try {
-            Geary.Account? first = Geary.Collection.first<Geary.Account>(
-                this.application.engine.get_accounts()
+    private Geary.Folder? get_conversation_operation_source(
+        Geary.App.Conversation conversation
+    ) {
+        return this.selected_location.get_operation_source(conversation);
+    }
+
+    private Gee.MultiMap<Geary.Folder, Geary.App.Conversation>
+        get_conversations_by_operation_source(
+            Gee.Collection<Geary.App.Conversation> conversations
+        ) {
+        var sources = new Gee.HashMultiMap<Geary.Folder, Geary.App.Conversation>();
+        foreach (Geary.App.Conversation conversation in conversations) {
+            Geary.Folder? source = get_conversation_operation_source(conversation);
+            if (source != null) {
+                sources.set(source, conversation);
+            }
+        }
+        return sources;
+    }
+
+    private delegate bool SourceSupportPredicate(Geary.Folder source);
+
+    private bool selected_sources_support(SourceSupportPredicate predicate) {
+        bool found = false;
+        foreach (Geary.App.Conversation conversation in
+                 this.conversation_list_view.selected) {
+            Geary.Folder? source = get_conversation_operation_source(conversation);
+            if (source == null || !predicate(source)) {
+                return false;
+            }
+            found = true;
+        }
+        return found;
+    }
+
+    private bool selected_sources_support_mark() {
+        return selected_sources_support(
+            (source) => source is Geary.FolderSupport.Mark
+        );
+    }
+
+    private bool selected_sources_support_archive() {
+        return selected_sources_support(
+            (source) => source is Geary.FolderSupport.Archive
+        );
+    }
+
+    private bool selected_sources_support_trash() {
+        return selected_sources_support(Controller.does_folder_support_trash);
+    }
+
+    private bool selected_sources_support_delete() {
+        return selected_sources_support(
+            (source) => source is Geary.FolderSupport.Remove
+        );
+    }
+
+    private bool selected_sources_support_junk_toggle() {
+        return selected_sources_support((source) => {
+            return (
+                source.used_as != JUNK &&
+                source.used_as != DRAFTS &&
+                source.used_as != OUTBOX
             );
-            if (first != null) {
-                inbox = first.get_special_folder(INBOX);
+        });
+    }
+
+    private bool selected_source_supports_reply() {
+        if (this.conversation_list_view.selected.size != 1) {
+            return false;
+        }
+        Geary.App.Conversation conversation = Geary.Collection.first(
+            this.conversation_list_view.selected
+        );
+        Geary.Folder? source = get_conversation_operation_source(conversation);
+        return source != null && source.used_as != DRAFTS;
+    }
+
+    private Geary.Account? get_current_conversation_account() {
+        Geary.Account? account = this.selected_account;
+        ConversationListBox? list_view = this.conversation_viewer.current_list;
+        if (account == null && list_view != null) {
+            account = list_view.conversation.base_folder.account;
+        }
+        return account;
+    }
+
+    private void mark_conversations_in_source(
+        Geary.Folder source,
+        Gee.Collection<Geary.App.Conversation> conversations,
+        Geary.NamedFlag flag,
+        bool prefer_adding
+    ) {
+        this.controller.mark_conversations.begin(
+            source,
+            conversations,
+            flag,
+            prefer_adding,
+            (obj, res) => {
+                try {
+                    this.controller.mark_conversations.end(res);
+                } catch (GLib.Error err) {
+                    handle_error(source.account.information, err);
+                }
+            }
+        );
+    }
+
+    private void move_conversations_special_in_source(
+        Geary.Folder source,
+        Geary.Folder.SpecialUse destination,
+        Gee.Collection<Geary.App.Conversation> conversations
+    ) {
+        this.controller.move_conversations_special.begin(
+            source,
+            destination,
+            conversations,
+            (obj, res) => {
+                try {
+                    this.controller.move_conversations_special.end(res);
+                } catch (GLib.Error err) {
+                    handle_error(source.account.information, err);
+                }
+            }
+        );
+    }
+
+    private void delete_conversations_in_source(
+        Geary.FolderSupport.Remove target,
+        Gee.Collection<Geary.App.Conversation> conversations
+    ) {
+        this.controller.delete_conversations.begin(
+            target,
+            conversations,
+            (obj, res) => {
+                try {
+                    this.controller.delete_conversations.end(res);
+                } catch (GLib.Error err) {
+                    handle_error(target.account.information, err);
+                }
+            }
+        );
+    }
+
+    private void move_selected_conversations_special(
+        Geary.Folder.SpecialUse destination
+    ) {
+        Gee.MultiMap<Geary.Folder, Geary.App.Conversation> conversations =
+            get_conversations_by_operation_source(
+                this.conversation_list_view.selected
+            );
+        foreach (Geary.Folder source in conversations.get_keys()) {
+            move_conversations_special_in_source(
+                source,
+                destination,
+                conversations.get(source)
+            );
+        }
+    }
+
+    private Geary.Folder? get_first_inbox(Geary.Account? except = null) {
+        try {
+            foreach (Geary.Account account in this.application.engine.get_accounts()) {
+                if (account != except) {
+                    Geary.Folder? inbox = account.get_special_folder(INBOX);
+                    if (inbox != null) {
+                        return inbox;
+                    }
+                }
             }
         } catch (GLib.Error error) {
             debug("Error getting inbox for first account");
         }
-        return inbox;
+        return null;
     }
 
     private void load_config(Configuration config) {
@@ -1309,6 +1654,16 @@ public class Application.MainWindow :
     private void setup_layout(Configuration config) {
         this.notify["has-toplevel-focus"].connect(on_has_toplevel_focus);
 
+        this.application_headerbar.scope_list_all_selected.connect(
+            on_scope_list_all_selected
+        );
+        this.application_headerbar.scope_unified_selected.connect(
+            on_scope_unified_selected
+        );
+        this.application_headerbar.scope_account_selected.connect(
+            on_scope_account_selected
+        );
+
         // Search bar
         this.search_bar = new SearchBar(this.application.engine);
         this.search_bar.search_text_changed.connect(on_search);
@@ -1317,6 +1672,12 @@ public class Application.MainWindow :
 
         // Folder list
         this.folder_list.folder_selected.connect(on_folder_selected);
+        this.folder_list.unified_special_folder_selected.connect(
+            on_unified_special_folder_selected
+        );
+        this.folder_list.unified_special_folder_activated.connect(
+            on_unified_special_folder_activated
+        );
         this.folder_list.move_conversation.connect(on_move_conversation);
         this.folder_list.copy_conversation.connect(on_copy_conversation);
         this.folder_list.folder_activated.connect(on_folder_activated);
@@ -1594,7 +1955,8 @@ public class Application.MainWindow :
         this.conversation_headerbar.full_actions.selected_conversations = to_select.size;
         this.conversation_headerbar.compact_actions.selected_conversations = to_select.size;
 
-        if (this.selected_folder != null && !this.has_composer) {
+        if ((this.selected_folder != null || this.selected_location.is_virtual) &&
+            !this.has_composer) {
             switch(to_select.size) {
             case 0:
                 update_conversation_actions(NONE);
@@ -1610,7 +1972,9 @@ public class Application.MainWindow :
                 // last email was removed but the conversation monitor
                 // hasn't signalled its removal yet. In this case,
                 // just don't load it since it will soon disappear.
-                AccountContext? context = get_selected_account_context();
+                AccountContext? context = this.controller.get_context_for_account(
+                    convo.base_folder.account.information
+                );
                 if (context != null && convo.get_count() > 0) {
                     try {
                         yield this.conversation_viewer.load_conversation(
@@ -1705,7 +2069,7 @@ public class Application.MainWindow :
     }
 
     private async void create_composer_from_viewer(Composer.Widget.ContextType type) {
-        Geary.Account? account = this.selected_account;
+        Geary.Account? account = get_current_conversation_account();
         ConversationEmail? email_view = null;
         ConversationListBox? list_view = this.conversation_viewer.current_list;
         if (list_view != null) {
@@ -1793,9 +2157,10 @@ public class Application.MainWindow :
         // Only update the UI if we don't currently have a composer,
         // so we don't clobber it
         if (!this.has_composer) {
-            if (this.conversations.size == 0) {
+            if (get_selected_conversation_count() == 0) {
                 // Let the user know if there's no available conversations
-                if (this.selected_folder.used_as == SEARCH) {
+                if (this.selected_folder != null &&
+                    this.selected_folder.used_as == SEARCH) {
                     this.conversation_viewer.show_empty_search();
                 } else {
                     this.conversation_viewer.show_empty_folder();
@@ -1853,8 +2218,7 @@ public class Application.MainWindow :
         bool reply_sensitive = (
             sensitive &&
             !multiple &&
-            this.selected_folder != null &&
-            this.selected_folder.used_as != DRAFTS
+            selected_source_supports_reply()
         );
         get_window_action(ACTION_REPLY_CONVERSATION).set_enabled(reply_sensitive);
         get_window_action(ACTION_REPLY_ALL_CONVERSATION).set_enabled(reply_sensitive);
@@ -1868,30 +2232,29 @@ public class Application.MainWindow :
             actions.set_copy_sensitive(copy_enabled);
         }
 
-        bool mark_enabled = (
-            sensitive && (this.selected_folder is Geary.FolderSupport.Mark)
-        );
+        bool mark_enabled = sensitive && selected_sources_support_mark();
         foreach (var actions in this.folder_conversation_actions) {
             actions.set_mark_sensitive(mark_enabled);
         }
 
         get_window_action(ACTION_ARCHIVE_CONVERSATION).set_enabled(
-            sensitive && (this.selected_folder is Geary.FolderSupport.Archive)
+            sensitive && selected_sources_support_archive()
         );
         get_window_action(ACTION_TRASH_CONVERSATION).set_enabled(
-            sensitive && this.selected_folder_supports_trash
+            sensitive && selected_sources_support_trash()
         );
         get_window_action(ACTION_DELETE_CONVERSATION).set_enabled(
-            sensitive && (this.selected_folder is Geary.FolderSupport.Remove)
+            sensitive && selected_sources_support_delete()
         );
 
+        update_trash_action();
         this.update_context_dependent_actions.begin(sensitive);
     }
 
     private void update_trash_action() {
         var show_trash = (
             !this.is_shift_down &&
-            this.selected_folder_supports_trash
+            selected_sources_support_trash()
         );
         this.conversation_list_actions.update_trash_button(show_trash);
         this.conversation_headerbar.full_actions.update_trash_button(show_trash);
@@ -1976,7 +2339,7 @@ public class Application.MainWindow :
                 focus = this.conversation_list_view;
             } else {
                 if (this.conversation_list_view.selected.size == 1 &&
-                    this.selected_folder.properties.email_total > 0) {
+                    get_selected_conversation_count() > 0) {
                     this.outer_leaflet.navigate(Hdy.NavigationDirection.FORWARD);
                     focus = this.conversation_viewer.visible_child;
                 }
@@ -2233,7 +2596,7 @@ public class Application.MainWindow :
         // conversation list/viewer.
         Geary.Folder? to_select = null;
         if (!is_shutdown) {
-            to_select = get_first_inbox();
+            to_select = get_first_inbox(account.account);
         }
         this.remove_account.begin(account, to_select);
     }
@@ -2367,6 +2730,51 @@ public class Application.MainWindow :
         this.select_folder.begin(folder, true);
     }
 
+    private void on_unified_special_folder_selected(
+        Geary.Folder.SpecialUse special_use
+    ) {
+        this.select_unified_special_folder.begin(special_use, true);
+    }
+
+    private void on_unified_special_folder_activated(
+        Geary.Folder.SpecialUse special_use
+    ) {
+        go_to_next_pane(!this.application.config.autoselect);
+    }
+
+    private void on_scope_list_all_selected() {
+        set_folder_list_scope(new FolderList.Scope.list_all());
+    }
+
+    private void on_scope_unified_selected() {
+        if (supports_unified_scope()) {
+            set_folder_list_scope(new FolderList.Scope.unified());
+        } else {
+            set_folder_list_scope(new FolderList.Scope.list_all());
+        }
+    }
+
+    private void on_scope_account_selected(Geary.Account account) {
+        set_folder_list_scope(new FolderList.Scope.for_account(account));
+    }
+
+    private void set_folder_list_scope(FolderList.Scope scope) {
+        if (scope.is_unified && !supports_unified_scope()) {
+            this.folder_list.set_scope(new FolderList.Scope.list_all());
+            this.application_headerbar.set_scope_list_all();
+            return;
+        }
+
+        this.folder_list.set_scope(scope);
+        if (scope.is_list_all) {
+            this.application_headerbar.set_scope_list_all();
+        } else if (scope.is_unified) {
+            this.application_headerbar.set_scope_unified();
+        } else if (scope.is_account) {
+            this.application_headerbar.set_scope_account(scope.account);
+        }
+    }
+
     private void on_select_inbox(SimpleAction action, Variant? parameter) {
         if (parameter != null) {
             int account_number = parameter.get_int32();
@@ -2498,133 +2906,68 @@ public class Application.MainWindow :
         get_window_action(ACTION_MARK_AS_STARRED).set_enabled(unstarred_selected);
         get_window_action(ACTION_MARK_AS_UNSTARRED).set_enabled(starred_selected);
 
-        // If we're in Drafts/Outbox, we also shouldn't set a message as junk
-        bool in_junk_folder = (selected_folder.used_as == JUNK);
         get_window_action(ACTION_TOGGLE_JUNK).set_enabled(
-            !in_junk_folder &&
-            selected_folder.used_as != DRAFTS &&
-            selected_folder.used_as != OUTBOX
+            selected_sources_support_junk_toggle()
         );
     }
 
     private void on_mark_conversations(Gee.Collection<Geary.App.Conversation> conversations,
                                        Geary.NamedFlag flag) {
-        Geary.Folder? location = this.selected_folder;
-        if (location != null) {
-            this.controller.mark_conversations.begin(
-                location,
-                conversations,
+        Gee.MultiMap<Geary.Folder, Geary.App.Conversation> by_source =
+            get_conversations_by_operation_source(conversations);
+        foreach (Geary.Folder source in by_source.get_keys()) {
+            mark_conversations_in_source(
+                source,
+                by_source.get(source),
                 flag,
-                true,
-                (obj, res) => {
-                    try {
-                        this.controller.mark_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(location.account.information, err);
-                    }
-                }
+                true
             );
         }
+    }
+
+    private void mark_selected_conversations(Geary.NamedFlag flag,
+                                             bool prefer_adding) {
+        Gee.MultiMap<Geary.Folder, Geary.App.Conversation> conversations =
+            get_conversations_by_operation_source(this.conversation_list_view.selected);
+        foreach (Geary.Folder source in conversations.get_keys()) {
+            mark_conversations_in_source(
+                source,
+                conversations.get(source),
+                flag,
+                prefer_adding
+            );
+        }
+        this.conversation_list_view.selection_mode_enabled = false;
     }
 
     private void on_mark_as_read() {
-        Geary.Folder? location = this.selected_folder;
-        if (location != null) {
-            this.controller.mark_conversations.begin(
-                location,
-                this.conversation_list_view.selected,
-                Geary.EmailFlags.UNREAD,
-                false,
-                (obj, res) => {
-                    try {
-                        this.controller.mark_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(location.account.information, err);
-                    }
-                }
-            );
-        }
-        this.conversation_list_view.selection_mode_enabled = false;
+        mark_selected_conversations(Geary.EmailFlags.UNREAD, false);
     }
 
     private void on_mark_as_unread() {
-        Geary.Folder? location = this.selected_folder;
-        if (location != null) {
-            this.controller.mark_conversations.begin(
-                location,
-                this.conversation_list_view.selected,
-                Geary.EmailFlags.UNREAD,
-                true,
-                (obj, res) => {
-                    try {
-                        this.controller.mark_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(location.account.information, err);
-                    }
-                }
-            );
-        }
-        this.conversation_list_view.selection_mode_enabled = false;
+        mark_selected_conversations(Geary.EmailFlags.UNREAD, true);
     }
 
     private void on_mark_as_starred() {
-        Geary.Folder? location = this.selected_folder;
-        if (location != null) {
-            this.controller.mark_conversations.begin(
-                location,
-                this.conversation_list_view.selected,
-                Geary.EmailFlags.FLAGGED,
-                true,
-                (obj, res) => {
-                    try {
-                        this.controller.mark_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(location.account.information, err);
-                    }
-                }
-            );
-        }
-        this.conversation_list_view.selection_mode_enabled = false;
+        mark_selected_conversations(Geary.EmailFlags.FLAGGED, true);
     }
 
     private void on_mark_as_unstarred() {
-        Geary.Folder? location = this.selected_folder;
-        if (location != null) {
-            this.controller.mark_conversations.begin(
-                location,
-                this.conversation_list_view.selected,
-                Geary.EmailFlags.FLAGGED,
-                false,
-                (obj, res) => {
-                    try {
-                        this.controller.mark_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(location.account.information, err);
-                    }
-                }
-            );
-        }
-        this.conversation_list_view.selection_mode_enabled = false;
+        mark_selected_conversations(Geary.EmailFlags.FLAGGED, false);
     }
 
     private void on_mark_as_junk_toggle() {
-        Geary.Folder? source = this.selected_folder;
-        if (source != null) {
+        Gee.MultiMap<Geary.Folder, Geary.App.Conversation> conversations =
+            get_conversations_by_operation_source(this.conversation_list_view.selected);
+        foreach (Geary.Folder source in conversations.get_keys()) {
             Geary.Folder.SpecialUse destination =
                 (source.used_as != JUNK)
                 ? Geary.Folder.SpecialUse.JUNK
                 : Geary.Folder.SpecialUse.INBOX;
-            this.controller.move_conversations_special.begin(
+            move_conversations_special_in_source(
                 source,
                 destination,
-                this.conversation_list_view.selected,
-                (obj, res) => {
-                    try {
-                        this.controller.move_conversations_special.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(source.account.information, err);
-                    }
-                }
+                conversations.get(source)
             );
         }
         this.conversation_list_view.selection_mode_enabled = false;
@@ -2673,60 +3016,30 @@ public class Application.MainWindow :
     }
 
     private void on_archive_conversation() {
-        Geary.Folder source = this.selected_folder;
-        if (source != null) {
-            this.controller.move_conversations_special.begin(
-                source,
-                ARCHIVE,
-                this.conversation_list_view.selected,
-                (obj, res) => {
-                    try {
-                        this.controller.move_conversations_special.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(source.account.information, err);
-                    }
-                }
-            );
-        }
+        move_selected_conversations_special(ARCHIVE);
         this.conversation_list_view.selection_mode_enabled = false;
     }
 
     private void on_trash_conversation() {
-        Geary.Folder source = this.selected_folder;
-        if (source != null) {
-            this.controller.move_conversations_special.begin(
-                source,
-                TRASH,
-                this.conversation_list_view.selected,
-                (obj, res) => {
-                    try {
-                        this.controller.move_conversations_special.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(source.account.information, err);
-                    }
-                }
-            );
-        }
+        move_selected_conversations_special(TRASH);
         // No need to disable selection mode, handled by model change
     }
 
     private void on_delete_conversation() {
-        Geary.FolderSupport.Remove target =
-            this.selected_folder as Geary.FolderSupport.Remove;
-        Gee.Collection<Geary.App.Conversation> conversations =
+        Gee.Collection<Geary.App.Conversation> selected =
             this.conversation_list_view.selected;
-        if (target != null && this.prompt_delete_conversations(conversations.size)) {
-            this.controller.delete_conversations.begin(
-                target,
-                conversations,
-                (obj, res) => {
-                    try {
-                        this.controller.delete_conversations.end(res);
-                    } catch (GLib.Error err) {
-                        handle_error(target.account.information, err);
-                    }
-                }
-            );
+        if (!this.prompt_delete_conversations(selected.size)) {
+            return;
+        }
+
+        Gee.MultiMap<Geary.Folder, Geary.App.Conversation> conversations =
+            get_conversations_by_operation_source(selected);
+        foreach (Geary.Folder source in conversations.get_keys()) {
+            Geary.FolderSupport.Remove? target =
+                source as Geary.FolderSupport.Remove;
+            if (target != null) {
+                delete_conversations_in_source(target, conversations.get(source));
+            }
         }
         // No need to disable selection mode, handled by model change
     }
@@ -2743,7 +3056,7 @@ public class Application.MainWindow :
                                Gee.Collection<Geary.EmailIdentifier> messages,
                                Geary.NamedFlag? to_add,
                                Geary.NamedFlag? to_remove) {
-        Geary.Folder? location = this.selected_folder;
+        Geary.Folder? location = get_conversation_operation_source(view.conversation);
         if (location != null) {
             Geary.EmailFlags add_flags = null;
             if (to_add != null) {
@@ -2774,34 +3087,33 @@ public class Application.MainWindow :
     }
 
     private void on_email_reply_to_sender(Geary.Email target, string? quote) {
-        if (this.selected_account != null) {
-            this.create_composer.begin(
-                this.selected_account, REPLY_SENDER, target, quote
-            );
+        Geary.Account? account = get_current_conversation_account();
+        if (account != null) {
+            this.create_composer.begin(account, REPLY_SENDER, target, quote);
         }
         this.conversation_list_view.selection_mode_enabled = false;
     }
 
     private void on_email_reply_to_all(Geary.Email target, string? quote) {
-        if (this.selected_account != null) {
+        Geary.Account? account = get_current_conversation_account();
+        if (account != null) {
             this.create_composer.begin(
-                this.selected_account, REPLY_ALL, target, quote
+                account, REPLY_ALL, target, quote
             );
         }
         this.conversation_list_view.selection_mode_enabled = false;
     }
 
     private void on_email_forward(Geary.Email target, string? quote) {
-        if (this.selected_account != null) {
-            this.create_composer.begin(
-                this.selected_account, FORWARD, target, quote
-            );
+        Geary.Account? account = get_current_conversation_account();
+        if (account != null) {
+            this.create_composer.begin(account, FORWARD, target, quote);
         }
         this.conversation_list_view.selection_mode_enabled = false;
     }
 
     private void on_email_trash(ConversationListBox view, Geary.Email target) {
-        Geary.Folder? source = this.selected_folder;
+        Geary.Folder? source = get_conversation_operation_source(view.conversation);
         if (source != null) {
             this.controller.move_messages_special.begin(
                 source,
@@ -2821,7 +3133,8 @@ public class Application.MainWindow :
 
     private void on_email_delete(ConversationListBox view, Geary.Email target) {
         Geary.FolderSupport.Remove? source =
-            this.selected_folder as Geary.FolderSupport.Remove;
+            get_conversation_operation_source(view.conversation)
+            as Geary.FolderSupport.Remove;
         if (source != null && prompt_delete_messages(1)) {
             this.controller.delete_messages.begin(
                 source,

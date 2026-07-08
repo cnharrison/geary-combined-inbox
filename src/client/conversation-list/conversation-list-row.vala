@@ -15,10 +15,13 @@ internal class ConversationList.Row : Gtk.ListBoxRow {
 
     private Gee.List<Geary.RFC822.MailboxAddress>? user_accounts  {
         owned get {
-            return conversation.base_folder.account.information.sender_mailboxes;
+            return source_folder.account.information.sender_mailboxes;
         }
     }
 
+    [GtkChild] unowned Gtk.Box preview_row;
+    [GtkChild] unowned Gtk.Label account_context;
+    [GtkChild] unowned Gtk.Label account_separator;
     [GtkChild] unowned Gtk.Label preview;
     [GtkChild] unowned Gtk.Label subject;
     [GtkChild] unowned Gtk.Label participants;
@@ -30,7 +33,10 @@ internal class ConversationList.Row : Gtk.ListBoxRow {
     [GtkChild] unowned Gtk.CheckButton selected_button;
 
     internal Geary.App.Conversation conversation;
+    private Geary.Folder source_folder;
     private Application.Configuration config;
+    private string account_context_text;
+    private bool show_account_context;
     private DateTime? recv_time;
 
     internal signal void toggle_flag(ConversationList.Row row,
@@ -40,14 +46,20 @@ internal class ConversationList.Row : Gtk.ListBoxRow {
 
     internal Row(Application.Configuration config,
                  Geary.App.Conversation conversation,
-                 bool selection_mode_enabled) {
+                 Geary.Folder source_folder,
+                 string account_context_text,
+                 bool selection_mode_enabled,
+                 bool show_account_context) {
         this.config = config;
         this.conversation = conversation;
+        this.source_folder = source_folder;
+        this.account_context_text = account_context_text;
+        this.show_account_context = show_account_context;
 
         conversation.email_flags_changed.connect(update_flags);
 
         config.bind(Application.Configuration.DISPLAY_PREVIEW_KEY,
-                    this.preview, "visible");
+                    this.preview_row, "visible");
 
         if (selection_mode_enabled) {
             set_selection_enabled(true);
@@ -69,6 +81,7 @@ internal class ConversationList.Row : Gtk.ListBoxRow {
             refresh_time();
         }
 
+        update_account_context();
         this.participants.set_markup(get_participants());
 
         var count = conversation.get_count();
@@ -146,12 +159,25 @@ internal class ConversationList.Row : Gtk.ListBoxRow {
         }
     }
 
+    private void update_account_context() {
+        if (this.show_account_context) {
+            this.account_context.set_text(this.account_context_text);
+            this.account_context.show();
+            this.account_separator.set_visible(
+                !Geary.String.is_empty(this.preview.get_text())
+            );
+        } else {
+            this.account_context.hide();
+            this.account_separator.hide();
+        }
+    }
+
     private string get_participants() {
         var participants = new Gee.ArrayList<Participant>();
         var addresses = new Geary.RFC822.MailboxAddresses();
         Gee.List<Geary.Email> emails = conversation.get_emails(
                           Geary.App.Conversation.Ordering.RECV_DATE_ASCENDING);
-        bool is_outgoing = conversation.base_folder.used_as.is_outgoing();
+        bool is_outgoing = this.source_folder.used_as.is_outgoing();
         foreach (Geary.Email message in emails) {
             Geary.RFC822.MailboxAddresses? addrs =
                 is_outgoing

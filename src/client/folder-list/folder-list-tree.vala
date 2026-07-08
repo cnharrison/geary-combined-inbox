@@ -11,20 +11,31 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
         { "application/x-geary-mail", Gtk.TargetFlags.SAME_APP, 0 }
     };
 
-    private const int INBOX_ORDINAL = -2; // First account branch is zero
+    private const int UNIFIED_ORDINAL = -2;
     private const int SEARCH_ORDINAL = -1;
 
 
     public signal void folder_selected(Geary.Folder? folder);
     public signal void folder_activated(Geary.Folder? folder);
+    public signal void unified_special_folder_selected(Geary.Folder.SpecialUse special_use);
+    public signal void unified_special_folder_activated(Geary.Folder.SpecialUse special_use);
+    public signal void combined_inbox_selected();
+    public signal void combined_inbox_activated();
     public signal void copy_conversation(Geary.Folder folder);
     public signal void move_conversation(Geary.Folder folder);
 
-    public Geary.Folder? selected { get ; private set; default = null; }
+    public Geary.Folder? selected { get; private set; default = null; }
+    internal Scope current_scope { get; private set; default = new Scope.list_all(); }
+    public Geary.Folder.SpecialUse selected_unified_special_use {
+        get; private set; default = NONE;
+    }
+    public bool selected_is_combined_inbox {
+        get { return selected_is_unified_special_folder(INBOX); }
+    }
 
     private Gee.HashMap<Geary.Account, AccountBranch> account_branches
         = new Gee.HashMap<Geary.Account, AccountBranch>();
-    private InboxesBranch inboxes_branch = new InboxesBranch();
+    private UnifiedBranch unified_branch = new UnifiedBranch();
     private SearchBranch? search_branch = null;
 
 
@@ -59,13 +70,6 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
             entry.set_has_new(has_new);
         }
 
-        if (folder.used_as == INBOX &&
-            has_branch(inboxes_branch)) {
-            entry = inboxes_branch.get_entry_for_account(folder.account);
-            if (entry != null) {
-                entry.set_has_new(has_new);
-            }
-        }
     }
 
     private void drop_handler(Gdk.DragContext context, Sidebar.Entry? entry,
@@ -88,17 +92,42 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
     }
 
     private void on_entry_selected(Sidebar.SelectableEntry selectable) {
+        UnifiedFolderEntry? unified = selectable as UnifiedFolderEntry;
+        if (unified != null) {
+            select_unified_entry(unified);
+            return;
+        }
+
         AbstractFolderEntry? entry = selectable as AbstractFolderEntry;
         if (entry != null) {
             this.selected = entry.folder;
+            this.selected_unified_special_use = NONE;
             folder_selected(entry.folder);
         }
     }
 
     private void on_entry_activated(Sidebar.SelectableEntry selectable) {
+        UnifiedFolderEntry? unified = selectable as UnifiedFolderEntry;
+        if (unified != null) {
+            unified_special_folder_activated(unified.special_use);
+            if (unified.special_use == INBOX) {
+                combined_inbox_activated();
+            }
+            return;
+        }
+
         AbstractFolderEntry? entry = selectable as AbstractFolderEntry;
         if (entry != null) {
             folder_activated(entry.folder);
+        }
+    }
+
+    private void select_unified_entry(UnifiedFolderEntry entry) {
+        this.selected = null;
+        this.selected_unified_special_use = entry.special_use;
+        unified_special_folder_selected(entry.special_use);
+        if (entry.special_use == INBOX) {
+            combined_inbox_selected();
         }
     }
 
@@ -117,15 +146,10 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
         }
 
         var account_branch = this.account_branches.get(account);
-        if (!has_branch(account_branch))
-            graft(account_branch, account.information.ordinal);
-
-        if (account_branches.size > 1 && !has_branch(inboxes_branch))
-            graft(inboxes_branch, INBOX_ORDINAL); // The Inboxes branch comes first.
-        if (folder.used_as == INBOX)
-            inboxes_branch.add_inbox(context);
-
         account_branch.add_folder(context);
+
+        this.unified_branch.add_folder(context);
+        update_scope_branches();
     }
 
     public void remove_folder(Application.FolderContext context) {
@@ -137,31 +161,28 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
         // If this is the current folder, unselect it.
         var entry = account_branch.get_entry_for_path(folder.path);
 
-        // if not found or found but not selected, see if the folder is in the Inboxes branch
-        if (has_branch(this.inboxes_branch) && (entry == null || !is_selected(entry))) {
-            var inbox_entry = this.inboxes_branch.get_entry_for_account(account);
-            if (inbox_entry != null && inbox_entry.folder == folder)
-                entry = inbox_entry;
-        }
-
         // if found and selected, report nothing is selected in preparation for its removal
         if (entry != null && is_selected(entry)) {
             deselect_folder();
         }
 
-        // if Inbox, remove from inboxes branch, selected or not
-        if (folder.used_as == INBOX)
-            inboxes_branch.remove_inbox(account);
+        this.unified_branch.remove_folder(context);
+        if (this.selected_unified_special_use != NONE &&
+            this.selected_unified_special_use == folder.used_as &&
+            this.unified_branch.get_entry_for_special_use(folder.used_as) == null) {
+            deselect_folder();
+        }
 
         account_branch.remove_folder(folder.path);
+        update_scope_branches();
     }
 
     public void remove_account(Geary.Account account) {
         account.information.notify["ordinal"].disconnect(on_ordinal_changed);
 
-        // If a folder on this account is selected, unselect it.
-        if (this.selected != null &&
-            this.selected.account == account) {
+        // If the active selection depends on this account, unselect it.
+        if (this.selected_unified_special_use != NONE ||
+            (this.selected != null && this.selected.account == account)) {
             deselect_folder();
         }
 
@@ -172,38 +193,135 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
             account_branches.unset(account);
         }
 
-        inboxes_branch.remove_inbox(account);
+        this.unified_branch.remove_account(account);
 
-        if (account_branches.size <= 1 && has_branch(inboxes_branch))
-            prune(inboxes_branch);
+        update_scope_branches();
+    }
+
+    private void update_scope_branches() {
+        foreach (AccountBranch branch in this.account_branches.values) {
+            update_account_branch(branch);
+        }
+
+        update_unified_branch();
+    }
+
+    private void update_account_branch(AccountBranch branch) {
+        bool should_show = (
+            this.current_scope.is_list_all ||
+            (this.current_scope.is_account && this.current_scope.account == branch.account)
+        );
+        set_branch_visible(branch, should_show, branch.account.information.ordinal);
+    }
+
+    private void update_unified_branch() {
+        set_branch_visible(
+            this.unified_branch,
+            this.current_scope.is_unified &&
+                this.unified_branch.get_child_count(this.unified_branch.get_root()) > 0,
+            UNIFIED_ORDINAL
+        );
+    }
+
+    private void set_branch_visible(Sidebar.Branch branch,
+                                    bool should_show,
+                                    int position) {
+        if (should_show) {
+            if (!branch.get_show_branch()) {
+                branch.set_show_branch(true);
+            }
+            if (!has_branch(branch)) {
+                graft(branch, position);
+            }
+        } else if (has_branch(branch)) {
+            prune(branch);
+        }
+    }
+
+    private bool folder_is_visible(Geary.Folder folder) {
+        return folder_is_visible_in_scope(folder, this.current_scope);
+    }
+
+    private bool folder_is_visible_in_scope(Geary.Folder folder, Scope scope) {
+        return scope.is_list_all ||
+            (scope.is_account && scope.account == folder.account);
+    }
+
+    private bool selection_is_visible_in_scope(Scope scope) {
+        if (this.selected_unified_special_use != NONE) {
+            return scope.is_unified;
+        }
+
+        return this.selected == null || folder_is_visible_in_scope(this.selected, scope);
+    }
+
+    internal void set_scope(Scope scope) {
+        if (!this.current_scope.equal_to(scope)) {
+            if (!selection_is_visible_in_scope(scope)) {
+                deselect_folder();
+            }
+
+            this.current_scope = scope;
+            update_scope_branches();
+        }
     }
 
     public void select_folder(Geary.Folder to_select) {
-        if (this.selected != to_select) {
-            bool selected = false;
-            if (to_select.used_as == INBOX) {
-                selected = select_inbox(to_select.account);
-            }
+        if (!folder_is_visible(to_select)) {
+            return;
+        }
 
-            if (!selected) {
-                FolderEntry? entry = get_folder_entry(to_select);
-                if (entry != null) {
-                    place_cursor(entry, false);
-                }
+        if (this.selected != to_select || this.selected_unified_special_use != NONE) {
+            FolderEntry? entry = get_folder_entry(to_select);
+            if (entry != null) {
+                place_cursor(entry, false);
             }
         }
     }
 
     public bool select_inbox(Geary.Account account) {
-        if (!has_branch(inboxes_branch))
+        AccountBranch? branch = this.account_branches.get(account);
+        if (branch == null) {
             return false;
+        }
 
-        InboxFolderEntry? entry = inboxes_branch.get_entry_for_account(account);
-        if (entry == null)
+        foreach (FolderEntry entry in branch.folder_entries.values) {
+            if (entry.folder.used_as == INBOX && folder_is_visible(entry.folder)) {
+                place_cursor(entry, false);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Compatibility alias for the former combined-inbox entry. */
+    public bool select_combined_inbox() {
+        return select_unified_special_folder(INBOX);
+    }
+
+    public bool select_unified_special_folder(Geary.Folder.SpecialUse special_use) {
+        if (!has_branch(unified_branch)) {
             return false;
+        }
 
-        place_cursor(entry, false);
-        return true;
+        UnifiedFolderEntry? entry = unified_branch.get_entry_for_special_use(special_use);
+        if (entry == null) {
+            return false;
+        }
+
+        return place_cursor(entry, false);
+    }
+
+    public bool selected_is_unified_special_folder(Geary.Folder.SpecialUse special_use) {
+        return this.selected_unified_special_use == special_use;
+    }
+
+    internal bool unified_branch_is_visible() {
+        return has_branch(this.unified_branch);
+    }
+
+    internal bool has_unified_special_folder(Geary.Folder.SpecialUse special_use) {
+        return this.unified_branch.get_entry_for_special_use(special_use) != null;
     }
 
     public void deselect_folder() {
@@ -218,6 +336,7 @@ public class FolderList.Tree : Sidebar.Tree, Geary.BaseInterface {
 
         get_selection().unselect_all();
         this.selected = null;
+        this.selected_unified_special_use = NONE;
         folder_selected(null);
     }
 

@@ -1,53 +1,17 @@
+# geary-combined-inbox
 
-Geary: Send and receive email
-=============================
+A personal downstream fork of GNOME Geary that adds a virtual **Combined Inbox** that shows all account inboxes in one list while keeping messages in their real accounts and folders.
 
-![Geary icon](https://gitlab.gnome.org/GNOME/geary/raw/HEAD/icons/hicolor/scalable/apps/org.gnome.Geary.svg)
+## Status
 
-Geary is an email application built around conversations, for the
-GNOME desktop. It allows you to read, find and send email with a
-straight-forward, modern interface.
+Dogfood
 
-Visit https://gitlab.gnome.org/GNOME/geary/-/wikis for more information.
+## Upstream
 
-**GitHub users please note**: Bug reports, code contributions and
-translations are managed using GNOME's infrastructure, so we cannot
-accept tickets or pull requests on GitHub. Please see the links below
-for more information.
+Based on [GNOME Geary](https://gitlab.gnome.org/GNOME/geary).
 
-![Geary displaying a conversation](https://static.gnome.org/appdata/geary/geary-40-main-window.png)
+Related upstream issue: [GNOME/geary#53](https://gitlab.gnome.org/GNOME/geary/-/issues/53).
 
-Building & Licensing
---------------------
+## License
 
-Please consult the [BUILDING.md](./BUILDING.md) and
-[COPYING](./COPYING) files for more information about building Geary
-and the licence granted by its copyright holders for redistribution.
-
-Getting in Touch
-----------------
-
- * Geary wiki: https://gitlab.gnome.org/GNOME/geary/-/wikis
- * Support and discussion: See the `geary` tag on [GNOME Discourse](https://discourse.gnome.org/tags/c/applications/7/geary)
- * Matrix channel: [#geary:gnome.org](https://gnome.element.io/#/room/#geary:gnome.org)
-
-Code Of Conduct
----------------
-
-As Geary is part of the GNOME community (and is hosted on its infrastructure),
-it follows the [GNOME Code of Conduct](https://conduct.gnome.org/). All
-communications in project spaces are expected to adhere to it.
-
-Contributing to Geary
----------------------
-
-Want to help improve Geary? Here are some ways to contribute:
-
- * Bug reporting: https://gitlab.gnome.org/GNOME/geary/-/wikis/Reporting-Bugs-and-Requesting-Features
- * Translating:   https://gitlab.gnome.org/GNOME/geary/-/wikis/Translating
- * Development:   https://gitlab.gnome.org/GNOME/geary/-/wikis/Development
- * Donate:        https://donate.gnome.org
-
----
-Copyright © 2016 Software Freedom Conservancy Inc.
-Copyright © 2017-2020 Michael Gratton <mike@vee.net>
+Same as upstream Geary.
