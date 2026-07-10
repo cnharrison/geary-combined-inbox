@@ -97,6 +97,7 @@ jobs:
           meson test
           --verbose
           --no-stdsplit
+          --num-processes 1
           -C "$BUILD_DIR"
           -t 10
 
