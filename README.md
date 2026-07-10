@@ -24,7 +24,7 @@ See [BUILDING.md](./BUILDING.md). The original upstream project overview is pres
 
 ## Upstream
 
-Based on GNOME Geary.
+Based on GNOME Geary. See the [upstream synchronization process](./docs/upstream-sync.md) for the review and release workflow.
 
 Related upstream issue: [GNOME/geary#53](https://gitlab.gnome.org/GNOME/geary/-/issues/53).
 
